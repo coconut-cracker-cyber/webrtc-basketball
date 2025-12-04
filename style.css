@@ -1,0 +1,83 @@
+body {
+    margin: 0;
+    overflow: hidden;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #222;
+    color: white;
+    touch-action: none;
+    /* Verhindert Zoom auf Mobile */
+}
+
+/* Styles für den Desktop/Main Screen */
+#game-screen {
+    display: none;
+    width: 100vw;
+    height: 100vh;
+    position: relative;
+}
+
+#canvas {
+    background: linear-gradient(to bottom, #87CEEB 0%, #E0F7FA 100%);
+    /* Himmel */
+    display: block;
+}
+
+#ui-layer {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 20px;
+    border-radius: 10px;
+    pointer-events: none;
+    /* Klicks gehen durch */
+}
+
+#qrcode {
+    margin-top: 10px;
+    background: white;
+    padding: 10px;
+    display: inline-block;
+}
+
+/* Styles für den Handy Controller */
+#controller-screen {
+    display: none;
+    width: 100vw;
+    height: 100vh;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background-color: #333;
+    text-align: center;
+}
+
+.btn {
+    background: #ff9800;
+    color: white;
+    border: none;
+    padding: 20px 40px;
+    font-size: 1.5rem;
+    border-radius: 50px;
+    cursor: pointer;
+    margin-top: 20px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+
+.btn:active {
+    transform: scale(0.95);
+}
+
+#status {
+    margin-top: 20px;
+    color: #aaa;
+}
+
+.ball-preview {
+    width: 100px;
+    height: 100px;
+    background: orange;
+    border-radius: 50%;
+    margin-bottom: 50px;
+    border: 2px solid #fff;
+}
