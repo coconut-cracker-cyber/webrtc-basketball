@@ -1,460 +1,408 @@
 <!DOCTYPE html>
-<html lang="de">
-
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>WebRTC Basketball 2.5D</title>
-
-    <!-- Externe Bibliotheken für QR-Code und WebRTC (PeerJS) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sensor Data Visualizer</title>
+    
+    <!-- External Libraries: PeerJS (WebRTC) & QRCode.js -->
     <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
     <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #222;
-            color: white;
-            touch-action: none;
-            /* Verhindert Zoom auf Mobile */
+        :root {
+            --bg-color: #121212;
+            --card-bg: #1e1e1e;
+            --text-color: #e0e0e0;
+            --accent-color: #00e676;
         }
 
-        /* Styles für den Desktop/Main Screen */
-        #game-screen {
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+
+        /* --- DESKTOP VIEW --- */
+        #desktop-view {
             display: none;
-            width: 100vw;
-            height: 100vh;
+            width: 90%;
+            max-width: 800px;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        h2 { margin-top: 0; color: var(--accent-color); border-bottom: 1px solid #333; padding-bottom: 10px;}
+
+        .bar-container {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .label { width: 50px; font-weight: bold; }
+        .value { width: 60px; text-align: right; margin-right: 10px;}
+        
+        .bar-bg {
+            flex-grow: 1;
+            height: 10px;
+            background: #333;
+            border-radius: 5px;
+            overflow: hidden;
             position: relative;
         }
 
-        #canvas {
-            background: linear-gradient(to bottom, #87CEEB 0%, #E0F7FA 100%);
-            /* Himmel */
-            display: block;
+        .bar-fill {
+            height: 100%;
+            background: var(--accent-color);
+            width: 50%; /* Center start */
+            position: absolute;
+            left: 50%;
+            transition: all 0.1s;
         }
 
-        #ui-layer {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 20px;
-            border-radius: 10px;
-            pointer-events: none;
-            /* Klicks gehen durch */
+        /* Visual Cube */
+        .scene {
+            width: 100px;
+            height: 100px;
+            perspective: 400px;
+            margin: 0 auto;
         }
+
+        .cube {
+            width: 100px;
+            height: 100px;
+            position: relative;
+            transform-style: preserve-3d;
+            transform: translateZ(-50px);
+            transition: transform 0.1s;
+        }
+
+        .cube-face {
+            position: absolute;
+            width: 100px;
+            height: 100px;
+            border: 2px solid var(--accent-color);
+            opacity: 0.7;
+            background: rgba(0, 230, 118, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .face-front  { transform: rotateY(  0deg) translateZ(50px); }
+        .face-right  { transform: rotateY( 90deg) translateZ(50px); }
+        .face-back   { transform: rotateY(180deg) translateZ(50px); }
+        .face-left   { transform: rotateY(-90deg) translateZ(50px); }
+        .face-top    { transform: rotateX( 90deg) translateZ(50px); }
+        .face-bottom { transform: rotateX(-90deg) translateZ(50px); }
 
         #qrcode {
-            margin-top: 10px;
             background: white;
             padding: 10px;
+            border-radius: 5px;
             display: inline-block;
         }
 
-        /* Styles für den Handy Controller */
-        #controller-screen {
+        /* --- MOBILE VIEW --- */
+        #mobile-view {
             display: none;
-            width: 100vw;
-            height: 100vh;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            background-color: #333;
             text-align: center;
+            padding: 20px;
         }
 
         .btn {
-            background: #ff9800;
-            color: white;
+            background-color: var(--accent-color);
+            color: #000;
             border: none;
-            padding: 20px 40px;
-            font-size: 1.5rem;
-            border-radius: 50px;
+            padding: 15px 30px;
+            font-size: 1.2rem;
+            border-radius: 30px;
             cursor: pointer;
+            font-weight: bold;
             margin-top: 20px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
         }
 
-        .btn:active {
-            transform: scale(0.95);
-        }
-
-        #status {
-            margin-top: 20px;
-            color: #aaa;
-        }
-
-        .ball-preview {
-            width: 100px;
-            height: 100px;
-            background: orange;
+        .status-indicator {
+            width: 20px;
+            height: 20px;
             border-radius: 50%;
-            margin-bottom: 50px;
-            border: 2px solid #fff;
+            background-color: #f44336; /* Red */
+            display: inline-block;
+            margin-right: 10px;
         }
+        .connected { background-color: var(--accent-color); }
     </style>
 </head>
-
 <body>
 
-    <!-- DESKTOP GAME SCREEN -->
-    <div id="game-screen">
-        <canvas id="canvas"></canvas>
-        <div id="ui-layer">
-            <h1>Streetball 2.5D</h1>
-            <p>Punkte: <span id="score">0</span></p>
-            <p>Scanne, um beizutreten:</p>
-            <div id="qrcode"></div>
-            <p style="font-size: 0.8rem; margin-top:5px;">Status: <span id="desktop-status">Warte auf
-                    Verbindung...</span></p>
+    <!-- ================= DESKTOP VIEW ================= -->
+    <div id="desktop-view">
+        <div style="text-align: center; margin-bottom: 30px;">
+            <h1>Smartphone Sensor Link</h1>
+            <div id="connection-panel">
+                <p>Scan to connect:</p>
+                <div id="qrcode"></div>
+                <p id="peer-id-display" style="font-size: 0.8rem; color: #777;"></p>
+            </div>
+        </div>
+
+        <div class="dashboard-grid">
+            <!-- Orientation Card -->
+            <div class="card">
+                <h2>Gyroscope (Orientation)</h2>
+                <div class="scene">
+                    <div class="cube" id="visual-cube">
+                        <div class="cube-face face-front">front</div>
+                        <div class="cube-face face-back">back</div>
+                        <div class="cube-face face-right">right</div>
+                        <div class="cube-face face-left">left</div>
+                        <div class="cube-face face-top">top</div>
+                        <div class="cube-face face-bottom">bot</div>
+                    </div>
+                </div>
+                <p>Alpha (Z): <span id="val-alpha">0</span>°</p>
+                <p>Beta (X): <span id="val-beta">0</span>°</p>
+                <p>Gamma (Y): <span id="val-gamma">0</span>°</p>
+            </div>
+
+            <!-- Acceleration Card -->
+            <div class="card">
+                <h2>Accelerometer (Motion)</h2>
+                
+                <!-- X Axis -->
+                <div class="bar-container">
+                    <span class="label">X</span>
+                    <span class="value" id="val-acc-x">0</span>
+                    <div class="bar-bg"><div class="bar-fill" id="bar-acc-x"></div></div>
+                </div>
+
+                <!-- Y Axis -->
+                <div class="bar-container">
+                    <span class="label">Y</span>
+                    <span class="value" id="val-acc-y">0</span>
+                    <div class="bar-bg"><div class="bar-fill" id="bar-acc-y"></div></div>
+                </div>
+
+                <!-- Z Axis -->
+                <div class="bar-container">
+                    <span class="label">Z</span>
+                    <span class="value" id="val-acc-z">0</span>
+                    <div class="bar-bg"><div class="bar-fill" id="bar-acc-z"></div></div>
+                </div>
+            </div>
         </div>
     </div>
 
-    <!-- MOBILE CONTROLLER SCREEN -->
-    <div id="controller-screen">
-        <div class="ball-preview" id="visual-feedback"></div>
-        <h2>Controller</h2>
-        <p>Halte das Handy wie einen Ball.</p>
-        <p>Mache eine Wurfbewegung nach vorne!</p>
+    <!-- ================= MOBILE VIEW ================= -->
+    <div id="mobile-view">
+        <h1>Sensor Transmitter</h1>
+        <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 20px;">
+            <div id="mobile-status-dot" class="status-indicator"></div>
+            <span id="mobile-status-text">Not Connected</span>
+        </div>
 
-        <!-- iOS benötigt einen Button für Sensor-Rechte -->
-        <button class="btn" id="btn-connect">Starten / Sensoren aktivieren</button>
-        <p id="status">Nicht verbunden</p>
-        <div id="debug" style="font-size: 0.7rem; color: #555; margin-top: 20px;"></div>
+        <p>This device will read sensors and send data to your desktop.</p>
+        
+        <button id="btn-enable-sensors" class="btn">Enable Sensors & Connect</button>
+        
+        <div style="margin-top: 40px; font-size: 0.8rem; color: #777;">
+            Sending Data...<br>
+            <span id="debug-out"></span>
+        </div>
     </div>
 
     <script>
-        // --- KONFIGURATION ---
-        // Wir nutzen PeerJS Cloud Server (kostenlos, aber limitiert). Für Produktion eigenen Server nutzen.
-        const peerConfig = {
-            debug: 2
-        };
+        // --- PeerJS Config ---
+        const peerConfig = { debug: 1 }; 
 
-        // URL Parameter prüfen um Modus zu bestimmen
+        // --- Logic Switch ---
         const urlParams = new URLSearchParams(window.location.search);
-        const mode = urlParams.get('mode'); // 'controller' oder null (desktop)
-        const hostId = urlParams.get('id'); // ID des Desktops, mit dem wir uns verbinden
+        const hostId = urlParams.get('host');
 
-        // --- LOGIK WEICHE ---
-        if (mode === 'controller' && hostId) {
-            initController(hostId);
+        if (hostId) {
+            initMobile(hostId);
         } else {
-            initGame();
+            initDesktop();
         }
 
-        // ==========================================
-        // TEIL 1: DESKTOP / GAME LOGIC
-        // ==========================================
-        function initGame() {
-            document.getElementById('game-screen').style.display = 'block';
-
-            const canvas = document.getElementById('canvas');
-            const ctx = canvas.getContext('2d');
-            let score = 0;
-            let width, height;
-
-            // PeerJS Setup
+        // ================= DESKTOP LOGIC =================
+        function initDesktop() {
+            document.getElementById('desktop-view').style.display = 'block';
+            
             const peer = new Peer(null, peerConfig);
-            let conn = null;
 
             peer.on('open', (id) => {
-                console.log('Meine Peer ID ist: ' + id);
+                console.log('My Peer ID: ' + id);
+                document.getElementById('peer-id-display').innerText = "ID: " + id;
 
-                // QR Code generieren
-                const joinUrl = `${window.location.href.split('?')[0]}?mode=controller&id=${id}`;
+                // Generate QR Code pointing to this page + host ID
+                const url = `${window.location.href.split('?')[0]}?host=${id}`;
                 new QRCode(document.getElementById("qrcode"), {
-                    text: joinUrl,
-                    width: 128,
-                    height: 128
+                    text: url,
+                    width: 150,
+                    height: 150
                 });
             });
 
-            peer.on('connection', (c) => {
-                conn = c;
-                document.getElementById('desktop-status').innerText = "Controller verbunden!";
-                document.getElementById('desktop-status').style.color = "#0f0";
+            peer.on('connection', (conn) => {
+                console.log("Mobile connected!");
+                document.getElementById('connection-panel').innerHTML = '<h3 style="color:var(--accent-color)">Smartphone Connected!</h3>';
 
-                // Daten vom Handy empfangen
                 conn.on('data', (data) => {
-                    if (data.type === 'throw') {
-                        spawnBall(data.force, data.direction);
-                    }
+                    updateDashboard(data);
                 });
             });
-
-            // Spiel-Objekte
-            const balls = [];
-            const hoop = { x: 0, y: 0, width: 120, height: 10, z: 500 }; // Z ist die Tiefe
-
-            // Resize Handler
-            function resize() {
-                width = window.innerWidth;
-                height = window.innerHeight;
-                canvas.width = width;
-                canvas.height = height;
-                // Korb positionieren (Mitte, etwas oben, "hinten" im Raum)
-                hoop.x = width / 2;
-                hoop.y = height * 0.3;
-            }
-            window.addEventListener('resize', resize);
-            resize();
-
-            function spawnBall(force, direction) {
-                // force: Wurfkraft (Beschleunigung)
-                // direction: Seitliche Neigung (Gamma)
-
-                // Normalisierung der Werte
-                const velocityZ = Math.min(Math.max(force, 5), 20) * 2; // Geschwindigkeit in die Tiefe
-                const velocityX = direction * 0.5; // Seitliche Drift
-                const velocityY = -15; // Wurf nach oben (Startimpuls)
-
-                balls.push({
-                    x: width / 2,       // Startet unten mittig
-                    y: height,
-                    z: 0,               // Startet "vorne" am Bildschirm
-                    vx: velocityX,
-                    vy: velocityY,
-                    vz: velocityZ,
-                    radius: 40,         // Startradius
-                    color: 'orange',
-                    scored: false
-                });
-            }
-
-            function update() {
-                ctx.clearRect(0, 0, width, height);
-
-                // 1. Korb zeichnen (2.5D - wird kleiner je weiter weg, hier statisch weit weg)
-                // Einfache Darstellung des Korbs (Backboard + Ring)
-                const depthScale = 1000 / (1000 + hoop.z); // Perspektivische Skalierung
-                const hW = hoop.width * depthScale;
-                const hX = hoop.x - hW / 2;
-                const hY = hoop.y;
-
-                // Backboard
-                ctx.fillStyle = "white";
-                ctx.fillRect(hX - 20 * depthScale, hY - 80 * depthScale, hW + 40 * depthScale, 80 * depthScale);
-                ctx.strokeStyle = "red";
-                ctx.strokeRect(hX + hW * 0.3, hY - 60 * depthScale, hW * 0.4, 40 * depthScale);
-
-                // Ring (Ellipse)
-                ctx.beginPath();
-                ctx.ellipse(hoop.x, hY, hW / 2, 10 * depthScale, 0, 0, Math.PI * 2);
-                ctx.lineWidth = 5;
-                ctx.strokeStyle = "orange";
-                ctx.stroke();
-
-
-                // 2. Bälle updaten und zeichnen
-                for (let i = balls.length - 1; i >= 0; i--) {
-                    let b = balls[i];
-
-                    // Physik
-                    b.x += b.vx;
-                    b.y += b.vy;
-                    b.z += b.vz;
-
-                    b.vy += 0.5; // Schwerkraft zieht nach unten
-                    // b.vz verringert sich leicht (Luftwiderstand)
-                    b.vz *= 0.99;
-
-                    // Perspektive berechnen (2.5D)
-                    // Je größer Z, desto weiter weg, desto kleiner der Ball
-                    // Formel: scale = focalLength / (focalLength + z)
-                    const focalLength = 1000;
-                    const scale = focalLength / (focalLength + b.z);
-
-                    const drawRadius = b.radius * scale;
-
-                    // Bodenkollision (simuliert)
-                    if (b.y > height + 100) {
-                        balls.splice(i, 1); // Ball entfernen wenn aus dem Bild
-                        continue;
-                    }
-
-                    // Zeichnen
-                    ctx.beginPath();
-                    ctx.arc(b.x, b.y, Math.max(drawRadius, 1), 0, Math.PI * 2);
-                    ctx.fillStyle = b.color;
-                    ctx.fill();
-                    ctx.strokeStyle = "#333";
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
-
-                    // Pseudo-Schatten für 3D Effekt
-                    ctx.beginPath();
-                    ctx.arc(b.x + 5 * scale, b.y + 5 * scale, Math.max(drawRadius, 1) * 0.8, 0, Math.PI * 2);
-                    ctx.fillStyle = "rgba(0,0,0,0.1)";
-                    ctx.fill();
-
-
-                    // Kollisionserkennung (Treffer)
-                    // Wir prüfen, ob der Ball in der Nähe der Korb-Tiefe (Z) ist und die X/Y Koordinaten stimmen
-                    if (!b.scored && Math.abs(b.z - hoop.z) < 50) { // Ist auf Korbhöhe (Tiefe)
-                        // Ist er beim Ring? (fällt von oben durch)
-                        if (Math.abs(b.x - hoop.x) < (hW / 2) && Math.abs(b.y - hoop.y) < 20 && b.vy > 0) {
-                            score++;
-                            b.scored = true;
-                            b.color = "#0f0"; // Visuelles Feedback
-                            document.getElementById('score').innerText = score;
-                        }
-                    }
-                }
-
-                requestAnimationFrame(update);
-            }
-
-            update();
         }
 
-        // ==========================================
-        // TEIL 2: MOBILE CONTROLLER LOGIC
-        // ==========================================
-        function initController(hostId) {
-            document.getElementById('controller-screen').style.display = 'flex';
-            const statusEl = document.getElementById('status');
-            const btn = document.getElementById('btn-connect');
-            const debugEl = document.getElementById('debug');
-            const visualBall = document.getElementById('visual-feedback');
+        function updateDashboard(data) {
+            // Update Orientation (Gyro)
+            if (data.type === 'orientation') {
+                const { alpha, beta, gamma } = data;
+                
+                // Update Text
+                document.getElementById('val-alpha').innerText = Math.round(alpha);
+                document.getElementById('val-beta').innerText = Math.round(beta);
+                document.getElementById('val-gamma').innerText = Math.round(gamma);
 
-            const peer = new Peer(null, peerConfig);
+                // Rotate Cube
+                const cube = document.getElementById('visual-cube');
+                // CSS Rotation order is important. Usually Z (alpha) -> X (beta) -> Y (gamma)
+                cube.style.transform = `rotateZ(${alpha}deg) rotateX(${beta}deg) rotateY(${gamma}deg)`;
+            }
+
+            // Update Acceleration
+            if (data.type === 'motion') {
+                const { x, y, z } = data;
+
+                updateBar('val-acc-x', 'bar-acc-x', x);
+                updateBar('val-acc-y', 'bar-acc-y', y);
+                updateBar('val-acc-z', 'bar-acc-z', z);
+            }
+        }
+
+        function updateBar(textId, barId, value) {
+            document.getElementById(textId).innerText = value.toFixed(1);
+            
+            // Visualize: 0 is 50% width. -10 is 0%, +10 is 100% (approx)
+            // Range -20 to 20 m/s^2
+            const percentage = 50 + (value * 2.5); 
+            document.getElementById(barId).style.width = `${Math.min(Math.max(percentage, 0), 100)}%`;
+            
+            // Adjust position (left/right of center)
+            if (value < 0) {
+                document.getElementById(barId).style.left = `${percentage}%`;
+                document.getElementById(barId).style.width = `${50 - percentage}%`;
+            } else {
+                document.getElementById(barId).style.left = `50%`;
+                document.getElementById(barId).style.width = `${percentage - 50}%`;
+            }
+        }
+
+        // ================= MOBILE LOGIC =================
+        function initMobile(targetId) {
+            document.getElementById('mobile-view').style.display = 'block';
+            const statusDot = document.getElementById('mobile-status-dot');
+            const statusText = document.getElementById('mobile-status-text');
+            const debugOut = document.getElementById('debug-out');
+
             let conn = null;
+            const peer = new Peer(null, peerConfig);
 
-            // PeerJS Verbindung aufbauen
             peer.on('open', (id) => {
-                statusEl.innerText = "Verbinde mit Desktop...";
-                conn = peer.connect(hostId);
+                console.log("Mobile Peer ID: " + id);
+                // Connect to Desktop
+                conn = peer.connect(targetId);
 
                 conn.on('open', () => {
-                    statusEl.innerText = "Verbunden! Bereit zum Werfen.";
-                    statusEl.style.color = "#0f0";
-                    btn.innerText = "Sensoren neu kalibrieren"; // Button ändert Zweck
+                    statusDot.classList.add('connected');
+                    statusText.innerText = "Connected to Desktop";
                 });
+                
+                conn.on('error', (err) => console.error(err));
+            });
 
-                conn.on('error', (err) => {
-                    statusEl.innerText = "Fehler: " + err;
+            // Button to trigger permission request (iOS Requirement)
+            document.getElementById('btn-enable-sensors').addEventListener('click', () => {
+                requestSensorPermission().then(() => {
+                    document.getElementById('btn-enable-sensors').style.display = 'none';
                 });
             });
 
-            // Sensoren Logik
-            let lastAccZ = 0;
-            let throwThreshold = 15; // Schwellenwert für Wurferkennung (m/s^2)
-            let canThrow = true;
-
-            // iOS 13+ benötigt explizite Erlaubnis für Sensoren
-            btn.addEventListener('click', () => {
-                if (typeof DeviceMotionEvent.requestPermission === 'function') {
-                    DeviceMotionEvent.requestPermission()
-                        .then(response => {
-                            if (response == 'granted') {
-                                startSensors();
-                            } else {
-                                alert("Sensoren müssen erlaubt sein!");
-                            }
-                        })
-                        .catch(console.error);
-                } else {
-                    // Android oder älteres iOS
-                    startSensors();
-                }
-            });
-
-            function startSensors() {
-                window.addEventListener('devicemotion', handleMotion);
-                // Optional: Orientation für Links/Rechts zielen
-                // window.addEventListener('deviceorientation', handleOrientation);
-                statusEl.innerText = "Sensoren aktiv. Wirf!";
+            function handleOrientation(event) {
+                if (!conn || !conn.open) return;
+                
+                // Send data roughly every frame or throttled
+                conn.send({
+                    type: 'orientation',
+                    alpha: event.alpha || 0, // Z-axis rotation
+                    beta: event.beta || 0,   // X-axis rotation
+                    gamma: event.gamma || 0  // Y-axis rotation
+                });
             }
 
-            let tiltLR = 0; // Neigung links/rechts
-
-            // Gyro/Orientation für die Richtung (Gamma: -90 bis 90)
-            window.addEventListener('deviceorientation', (event) => {
-                // Wir nutzen Gamma (Neigung links/rechts) zum Zielen
-                if (event.gamma) {
-                    tiltLR = event.gamma;
-                    // Visuelles Feedback auf dem Handy
-                    visualBall.style.transform = `translateX(${tiltLR}px)`;
-                }
-            });
-
             function handleMotion(event) {
-                if (!conn) return;
+                if (!conn || !conn.open) return;
+                
+                const acc = event.accelerationIncludingGravity; // Use gravity to show static position too
+                conn.send({
+                    type: 'motion',
+                    x: acc.x || 0,
+                    y: acc.y || 0,
+                    z: acc.z || 0
+                });
+                
+                // debugOut.innerText = `X: ${acc.x.toFixed(1)}`;
+            }
 
-                // Wir schauen auf die Beschleunigung (inkl. Gravitation oder ohne)
-                // Z-Achse ist meistens die Achse, die "aus dem Bildschirm" kommt.
-                // Bei einer Wurfbewegung (Handy nach vorne stoßen) ändert sich Z stark.
-                // ACHTUNG: Je nach Handy-Haltung (Hochformat) kann es auch Y sein.
-                // Wir nehmen hier eine Kombination oder schauen auf die stärkste Achse.
+            // Permission Helper for iOS 13+
+            function requestSensorPermission() {
+                return new Promise((resolve, reject) => {
+                    if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                        DeviceMotionEvent.requestPermission()
+                            .then(permissionState => {
+                                if (permissionState === 'granted') {
+                                    startSensors();
+                                    resolve();
+                                } else {
+                                    alert("Permission denied");
+                                    reject();
+                                }
+                            })
+                            .catch(console.error);
+                    } else {
+                        // Non-iOS 13+ devices
+                        startSensors();
+                        resolve();
+                    }
+                });
+            }
 
-                // Einfacher Ansatz: Beschleunigung (ohne Gravitation)
-                const acc = event.acceleration;
-                if (!acc) return;
-
-                // Gesamtkraft berechnen (Vektorlänge), aber Fokus auf Bewegung nach "vorne"
-                // Wenn man das Handy vor dem Gesicht hält, ist "vorne" oft -Z (bei Android/Web Standard).
-
-                // Einfache Heuristik: Ein starker positiver oder negativer Peak in Z oder Y
-                const force = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
-
-                // Debug Ausgabe
-                // debugEl.innerText = `Force: ${force.toFixed(1)} | Tilt: ${tiltLR.toFixed(1)}`;
-
-                if (canThrow && force > throwThreshold) {
-                    // Wurf erkannt!
-                    canThrow = false;
-
-                    // Daten an Desktop senden
-                    conn.send({
-                        type: 'throw',
-                        force: force,
-                        direction: tiltLR // Wert von der Orientation API
-                    });
-
-                    // Visuelles Feedback
-                    document.body.style.backgroundColor = "#555";
-                    setTimeout(() => { document.body.style.backgroundColor = "#333"; }, 100);
-
-                    // Cooldown, damit man nicht 50 Bälle pro Sekunde wirft
-                    setTimeout(() => {
-                        canThrow = true;
-                    }, 800);
-                }
+            function startSensors() {
+                window.addEventListener('deviceorientation', handleOrientation);
+                window.addEventListener('devicemotion', handleMotion);
             }
         }
     </script>
 </body>
-
 </html>
-```doc
-### Anleitung für die Übung
-
-1. **Lokales Testen:**
-* Erstelle einen Ordner und speichere den Code als `index.html`.
-* Du brauchst **HTTPS** (oder `localhost`), damit Sensoren auf dem Handy funktionieren.
-* Wenn du VS Code nutzt, installiere die "Live Server" Extension. Öffne die Datei damit.
-
-2. **Public Hosting (Empfohlen für die Übungsabgabe):**
-* Lade die Datei auf GitHub Pages, Netlify oder Vercel hoch (das ist kostenlos und bietet sofort HTTPS).
-* Das ist wichtig, da du mit dem Handy auf die URL zugreifen musst und `file://` oder `localhost` (ohne Port-Forwarding)
-vom Handy aus nicht gehen.
-
-3. **Benutzung:**
-* Öffne die Seite am PC/Laptop. Du siehst den "Game Screen" und einen QR-Code.
-* Scanne den QR-Code mit deinem Smartphone.
-* Die Seite öffnet sich am Handy im "Controller"-Modus.
-* Klicke auf dem Handy auf **"Starten / Sensoren aktivieren"** (wichtig bei iOS!).
-* Halte das Handy fest (bitte nicht werfen!) und mache eine Wurfbewegung nach vorne.
-* Auf dem Desktop sollte ein Ball fliegen.
-
-### Erfüllte Anforderungen der Übung
-
-* **Canvas:** Wird genutzt, um das Spielfeld und die fliegenden Bälle zu rendern (`ctx.arc`, `ctx.fill`).
-* **Gyro/Sensoren (HTML5 Feature):** `DeviceMotion` wird genutzt, um die Wurfkraft zu messen, und `DeviceOrientation`
-(Gamma), um die seitliche Drift zu bestimmen.
-* **WebRTC:** Wird über die `PeerJS` Bibliothek genutzt, um die Sensordaten latenzfrei vom Handy an den Desktop zu
-schicken, ohne dass ein komplexer Backend-Server programmiert werden musste.
-* **2.5D Logik:** Die Variable `scale = focalLength / (focalLength + z)` sorgt dafür, dass Objekte kleiner werden, je
-größer ihre Z-Koordinate ist (simulierte Tiefe).
