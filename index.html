@@ -7,9 +7,10 @@
     <title>Sticky Slime Jump</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 
+    <!-- External Libraries -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
@@ -21,6 +22,7 @@
 
         <div id="ui-layer">
             <div id="score-container">
+                <span id="score-label">HEIGHT</span>
                 <span id="score-value">0m</span>
             </div>
 
@@ -37,30 +39,17 @@
 
     <!-- CONTROLLER VIEW (Phone) -->
     <div id="controller-view" class="hidden">
-        <div id="controller-header">
-            <div class="status-indicator">
-                <div class="status-dot" id="status-dot"></div>
-                <span id="status-text">Disconnected</span>
-            </div>
-            <div id="controller-score">0m</div>
-        </div>
-
-        <div id="tilt-display">
-            <div id="radar-circle">
-                <div id="puck"></div> <!-- The "Ball" representing tilt -->
-                <div id="arrow-container">
-                    <div id="controller-arrow"></div>
+        <div id="controller-container">
+            <div id="tilt-display">
+                <div id="tilt-ring">
+                    <div id="arrow"></div>
                 </div>
+                <p>Tilt to Aim</p>
             </div>
-        </div>
 
-        <div id="controls-area">
             <button id="jump-btn">JUMP</button>
         </div>
-
         <div id="start-overlay">
-            <h1>Ready?</h1>
-            <p style="color:#aaa; margin-bottom: 20px;">Hold phone flat</p>
             <button id="enable-sensors-btn">TAP TO START</button>
         </div>
     </div>
