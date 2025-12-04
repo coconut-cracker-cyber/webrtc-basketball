@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>WebRTC Basketball 2.5D</title>
+
+    <!-- Externe Bibliotheken für QR-Code und WebRTC (PeerJS) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #222;
+            color: white;
+            touch-action: none;
+            /* Verhindert Zoom auf Mobile */
+        }
+
+        /* Styles für den Desktop/Main Screen */
+        #game-screen {
+            display: none;
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+
+        #canvas {
+            background: linear-gradient(to bottom, #87CEEB 0%, #E0F7FA 100%);
+            /* Himmel */
+            display: block;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 10px;
+            pointer-events: none;
+            /* Klicks gehen durch */
+        }
+
+        #qrcode {
+            margin-top: 10px;
+            background: white;
+            padding: 10px;
+            display: inline-block;
+        }
+
+        /* Styles für den Handy Controller */
+        #controller-screen {
+            display: none;
+            width: 100vw;
+            height: 100vh;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: #333;
+            text-align: center;
+        }
+
+        .btn {
+            background: #ff9800;
+            color: white;
+            border: none;
+            padding: 20px 40px;
+            font-size: 1.5rem;
+            border-radius: 50px;
+            cursor: pointer;
+            margin-top: 20px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn:active {
+            transform: scale(0.95);
+        }
+
+        #status {
+            margin-top: 20px;
+            color: #aaa;
+        }
+
+        .ball-preview {
+            width: 100px;
+            height: 100px;
+            background: orange;
+            border-radius: 50%;
+            margin-bottom: 50px;
+            border: 2px solid #fff;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- DESKTOP GAME SCREEN -->
+    <div id="game-screen">
+        <canvas id="canvas"></canvas>
+        <div id="ui-layer">
+            <h1>Streetball 2.5D</h1>
+            <p>Punkte: <span id="score">0</span></p>
+            <p>Scanne, um beizutreten:</p>
+            <div id="qrcode"></div>
+            <p style="font-size: 0.8rem; margin-top:5px;">Status: <span id="desktop-status">Warte auf
+                    Verbindung...</span></p>
+        </div>
+    </div>
+
+    <!-- MOBILE CONTROLLER SCREEN -->
+    <div id="controller-screen">
+        <div class="ball-preview" id="visual-feedback"></div>
+        <h2>Controller</h2>
+        <p>Halte das Handy wie einen Ball.</p>
+        <p>Mache eine Wurfbewegung nach vorne!</p>
+
+        <!-- iOS benötigt einen Button für Sensor-Rechte -->
+        <button class="btn" id="btn-connect">Starten / Sensoren aktivieren</button>
+        <p id="status">Nicht verbunden</p>
+        <div id="debug" style="font-size: 0.7rem; color: #555; margin-top: 20px;"></div>
+    </div>
+
+    <script>
+        // --- KONFIGURATION ---
+        // Wir nutzen PeerJS Cloud Server (kostenlos, aber limitiert). Für Produktion eigenen Server nutzen.
+        const peerConfig = {
+            debug: 2
+        };
+
+        // URL Parameter prüfen um Modus zu bestimmen
+        const urlParams = new URLSearchParams(window.location.search);
+        const mode = urlParams.get('mode'); // 'controller' oder null (desktop)
+        const hostId = urlParams.get('id'); // ID des Desktops, mit dem wir uns verbinden
+
+        // --- LOGIK WEICHE ---
+        if (mode === 'controller' && hostId) {
+            initController(hostId);
+        } else {
+            initGame();
+        }
+
+        // ==========================================
+        // TEIL 1: DESKTOP / GAME LOGIC
+        // ==========================================
+        function initGame() {
+            document.getElementById('game-screen').style.display = 'block';
+
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            let score = 0;
+            let width, height;
+
+            // PeerJS Setup
+            const peer = new Peer(null, peerConfig);
+            let conn = null;
+
+            peer.on('open', (id) => {
+                console.log('Meine Peer ID ist: ' + id);
+
+                // QR Code generieren
+                const joinUrl = `${window.location.href.split('?')[0]}?mode=controller&id=${id}`;
+                new QRCode(document.getElementById("qrcode"), {
+                    text: joinUrl,
+                    width: 128,
+                    height: 128
+                });
+            });
+
+            peer.on('connection', (c) => {
+                conn = c;
+                document.getElementById('desktop-status').innerText = "Controller verbunden!";
+                document.getElementById('desktop-status').style.color = "#0f0";
+
+                // Daten vom Handy empfangen
+                conn.on('data', (data) => {
+                    if (data.type === 'throw') {
+                        spawnBall(data.force, data.direction);
+                    }
+                });
+            });
+
+            // Spiel-Objekte
+            const balls = [];
+            const hoop = { x: 0, y: 0, width: 120, height: 10, z: 500 }; // Z ist die Tiefe
+
+            // Resize Handler
+            function resize() {
+                width = window.innerWidth;
+                height = window.innerHeight;
+                canvas.width = width;
+                canvas.height = height;
+                // Korb positionieren (Mitte, etwas oben, "hinten" im Raum)
+                hoop.x = width / 2;
+                hoop.y = height * 0.3;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            function spawnBall(force, direction) {
+                // force: Wurfkraft (Beschleunigung)
+                // direction: Seitliche Neigung (Gamma)
+
+                // Normalisierung der Werte
+                const velocityZ = Math.min(Math.max(force, 5), 20) * 2; // Geschwindigkeit in die Tiefe
+                const velocityX = direction * 0.5; // Seitliche Drift
+                const velocityY = -15; // Wurf nach oben (Startimpuls)
+
+                balls.push({
+                    x: width / 2,       // Startet unten mittig
+                    y: height,
+                    z: 0,               // Startet "vorne" am Bildschirm
+                    vx: velocityX,
+                    vy: velocityY,
+                    vz: velocityZ,
+                    radius: 40,         // Startradius
+                    color: 'orange',
+                    scored: false
+                });
+            }
+
+            function update() {
+                ctx.clearRect(0, 0, width, height);
+
+                // 1. Korb zeichnen (2.5D - wird kleiner je weiter weg, hier statisch weit weg)
+                // Einfache Darstellung des Korbs (Backboard + Ring)
+                const depthScale = 1000 / (1000 + hoop.z); // Perspektivische Skalierung
+                const hW = hoop.width * depthScale;
+                const hX = hoop.x - hW / 2;
+                const hY = hoop.y;
+
+                // Backboard
+                ctx.fillStyle = "white";
+                ctx.fillRect(hX - 20 * depthScale, hY - 80 * depthScale, hW + 40 * depthScale, 80 * depthScale);
+                ctx.strokeStyle = "red";
+                ctx.strokeRect(hX + hW * 0.3, hY - 60 * depthScale, hW * 0.4, 40 * depthScale);
+
+                // Ring (Ellipse)
+                ctx.beginPath();
+                ctx.ellipse(hoop.x, hY, hW / 2, 10 * depthScale, 0, 0, Math.PI * 2);
+                ctx.lineWidth = 5;
+                ctx.strokeStyle = "orange";
+                ctx.stroke();
+
+
+                // 2. Bälle updaten und zeichnen
+                for (let i = balls.length - 1; i >= 0; i--) {
+                    let b = balls[i];
+
+                    // Physik
+                    b.x += b.vx;
+                    b.y += b.vy;
+                    b.z += b.vz;
+
+                    b.vy += 0.5; // Schwerkraft zieht nach unten
+                    // b.vz verringert sich leicht (Luftwiderstand)
+                    b.vz *= 0.99;
+
+                    // Perspektive berechnen (2.5D)
+                    // Je größer Z, desto weiter weg, desto kleiner der Ball
+                    // Formel: scale = focalLength / (focalLength + z)
+                    const focalLength = 1000;
+                    const scale = focalLength / (focalLength + b.z);
+
+                    const drawRadius = b.radius * scale;
+
+                    // Bodenkollision (simuliert)
+                    if (b.y > height + 100) {
+                        balls.splice(i, 1); // Ball entfernen wenn aus dem Bild
+                        continue;
+                    }
+
+                    // Zeichnen
+                    ctx.beginPath();
+                    ctx.arc(b.x, b.y, Math.max(drawRadius, 1), 0, Math.PI * 2);
+                    ctx.fillStyle = b.color;
+                    ctx.fill();
+                    ctx.strokeStyle = "#333";
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Pseudo-Schatten für 3D Effekt
+                    ctx.beginPath();
+                    ctx.arc(b.x + 5 * scale, b.y + 5 * scale, Math.max(drawRadius, 1) * 0.8, 0, Math.PI * 2);
+                    ctx.fillStyle = "rgba(0,0,0,0.1)";
+                    ctx.fill();
+
+
+                    // Kollisionserkennung (Treffer)
+                    // Wir prüfen, ob der Ball in der Nähe der Korb-Tiefe (Z) ist und die X/Y Koordinaten stimmen
+                    if (!b.scored && Math.abs(b.z - hoop.z) < 50) { // Ist auf Korbhöhe (Tiefe)
+                        // Ist er beim Ring? (fällt von oben durch)
+                        if (Math.abs(b.x - hoop.x) < (hW / 2) && Math.abs(b.y - hoop.y) < 20 && b.vy > 0) {
+                            score++;
+                            b.scored = true;
+                            b.color = "#0f0"; // Visuelles Feedback
+                            document.getElementById('score').innerText = score;
+                        }
+                    }
+                }
+
+                requestAnimationFrame(update);
+            }
+
+            update();
+        }
+
+        // ==========================================
+        // TEIL 2: MOBILE CONTROLLER LOGIC
+        // ==========================================
+        function initController(hostId) {
+            document.getElementById('controller-screen').style.display = 'flex';
+            const statusEl = document.getElementById('status');
+            const btn = document.getElementById('btn-connect');
+            const debugEl = document.getElementById('debug');
+            const visualBall = document.getElementById('visual-feedback');
+
+            const peer = new Peer(null, peerConfig);
+            let conn = null;
+
+            // PeerJS Verbindung aufbauen
+            peer.on('open', (id) => {
+                statusEl.innerText = "Verbinde mit Desktop...";
+                conn = peer.connect(hostId);
+
+                conn.on('open', () => {
+                    statusEl.innerText = "Verbunden! Bereit zum Werfen.";
+                    statusEl.style.color = "#0f0";
+                    btn.innerText = "Sensoren neu kalibrieren"; // Button ändert Zweck
+                });
+
+                conn.on('error', (err) => {
+                    statusEl.innerText = "Fehler: " + err;
+                });
+            });
+
+            // Sensoren Logik
+            let lastAccZ = 0;
+            let throwThreshold = 15; // Schwellenwert für Wurferkennung (m/s^2)
+            let canThrow = true;
+
+            // iOS 13+ benötigt explizite Erlaubnis für Sensoren
+            btn.addEventListener('click', () => {
+                if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                    DeviceMotionEvent.requestPermission()
+                        .then(response => {
+                            if (response == 'granted') {
+                                startSensors();
+                            } else {
+                                alert("Sensoren müssen erlaubt sein!");
+                            }
+                        })
+                        .catch(console.error);
+                } else {
+                    // Android oder älteres iOS
+                    startSensors();
+                }
+            });
+
+            function startSensors() {
+                window.addEventListener('devicemotion', handleMotion);
+                // Optional: Orientation für Links/Rechts zielen
+                // window.addEventListener('deviceorientation', handleOrientation);
+                statusEl.innerText = "Sensoren aktiv. Wirf!";
+            }
+
+            let tiltLR = 0; // Neigung links/rechts
+
+            // Gyro/Orientation für die Richtung (Gamma: -90 bis 90)
+            window.addEventListener('deviceorientation', (event) => {
+                // Wir nutzen Gamma (Neigung links/rechts) zum Zielen
+                if (event.gamma) {
+                    tiltLR = event.gamma;
+                    // Visuelles Feedback auf dem Handy
+                    visualBall.style.transform = `translateX(${tiltLR}px)`;
+                }
+            });
+
+            function handleMotion(event) {
+                if (!conn) return;
+
+                // Wir schauen auf die Beschleunigung (inkl. Gravitation oder ohne)
+                // Z-Achse ist meistens die Achse, die "aus dem Bildschirm" kommt.
+                // Bei einer Wurfbewegung (Handy nach vorne stoßen) ändert sich Z stark.
+                // ACHTUNG: Je nach Handy-Haltung (Hochformat) kann es auch Y sein.
+                // Wir nehmen hier eine Kombination oder schauen auf die stärkste Achse.
+
+                // Einfacher Ansatz: Beschleunigung (ohne Gravitation)
+                const acc = event.acceleration;
+                if (!acc) return;
+
+                // Gesamtkraft berechnen (Vektorlänge), aber Fokus auf Bewegung nach "vorne"
+                // Wenn man das Handy vor dem Gesicht hält, ist "vorne" oft -Z (bei Android/Web Standard).
+
+                // Einfache Heuristik: Ein starker positiver oder negativer Peak in Z oder Y
+                const force = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+
+                // Debug Ausgabe
+                // debugEl.innerText = `Force: ${force.toFixed(1)} | Tilt: ${tiltLR.toFixed(1)}`;
+
+                if (canThrow && force > throwThreshold) {
+                    // Wurf erkannt!
+                    canThrow = false;
+
+                    // Daten an Desktop senden
+                    conn.send({
+                        type: 'throw',
+                        force: force,
+                        direction: tiltLR // Wert von der Orientation API
+                    });
+
+                    // Visuelles Feedback
+                    document.body.style.backgroundColor = "#555";
+                    setTimeout(() => { document.body.style.backgroundColor = "#333"; }, 100);
+
+                    // Cooldown, damit man nicht 50 Bälle pro Sekunde wirft
+                    setTimeout(() => {
+                        canThrow = true;
+                    }, 800);
+                }
+            }
+        }
+    </script>
+</body>
+
+</html>
+```doc
+### Anleitung für die Übung
+
+1. **Lokales Testen:**
+* Erstelle einen Ordner und speichere den Code als `index.html`.
+* Du brauchst **HTTPS** (oder `localhost`), damit Sensoren auf dem Handy funktionieren.
+* Wenn du VS Code nutzt, installiere die "Live Server" Extension. Öffne die Datei damit.
+
+2. **Public Hosting (Empfohlen für die Übungsabgabe):**
+* Lade die Datei auf GitHub Pages, Netlify oder Vercel hoch (das ist kostenlos und bietet sofort HTTPS).
+* Das ist wichtig, da du mit dem Handy auf die URL zugreifen musst und `file://` oder `localhost` (ohne Port-Forwarding)
+vom Handy aus nicht gehen.
+
+3. **Benutzung:**
+* Öffne die Seite am PC/Laptop. Du siehst den "Game Screen" und einen QR-Code.
+* Scanne den QR-Code mit deinem Smartphone.
+* Die Seite öffnet sich am Handy im "Controller"-Modus.
+* Klicke auf dem Handy auf **"Starten / Sensoren aktivieren"** (wichtig bei iOS!).
+* Halte das Handy fest (bitte nicht werfen!) und mache eine Wurfbewegung nach vorne.
+* Auf dem Desktop sollte ein Ball fliegen.
+
+### Erfüllte Anforderungen der Übung
+
+* **Canvas:** Wird genutzt, um das Spielfeld und die fliegenden Bälle zu rendern (`ctx.arc`, `ctx.fill`).
+* **Gyro/Sensoren (HTML5 Feature):** `DeviceMotion` wird genutzt, um die Wurfkraft zu messen, und `DeviceOrientation`
+(Gamma), um die seitliche Drift zu bestimmen.
+* **WebRTC:** Wird über die `PeerJS` Bibliothek genutzt, um die Sensordaten latenzfrei vom Handy an den Desktop zu
+schicken, ohne dass ein komplexer Backend-Server programmiert werden musste.
+* **2.5D Logik:** Die Variable `scale = focalLength / (focalLength + z)` sorgt dafür, dass Objekte kleiner werden, je
+größer ihre Z-Koordinate ist (simulierte Tiefe).
