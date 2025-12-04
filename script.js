@@ -1,3 +1,5 @@
+
+
 // DOM Elements
 const hostView = document.getElementById('host-view');
 const controllerView = document.getElementById('controller-view');
@@ -16,12 +18,14 @@ const jumpBtn = document.getElementById('jump-btn');
 const startOverlay = document.getElementById('start-overlay');
 const enableSensorsBtn = document.getElementById('enable-sensors-btn');
 
-// Constants
-const GRAVITY = 0.4;
-const FRICTION = 0.98;
-const JUMP_FORCE_MULTIPLIER = 0.3;
-const MAX_JUMP_FORCE = 25;
+// Constants & Config
+const ZOOM = 0.6; // Zoom out
+const GRAVITY = 0.5;
+const FRICTION = 0.99;
+const JUMP_FORCE_MULTIPLIER = 0.45;
+const MAX_JUMP_FORCE = 35;
 const TILT_SENSITIVITY = 1.5;
+const SUBSTEPS = 8; // Physics accuracy
 
 // Variables
 let peer;
@@ -31,9 +35,20 @@ let gameState = 'start';
 let score = 0;
 let cameraY = 0;
 let lastTime = 0;
+let worldWidth = 0;
+let worldHeight = 0;
 
 // Player & World
-const player = { x: 0, y: 0, radius: 15, vx: 0, vy: 0, state: 'stuck', color: '#00ff88' };
+const player = {
+    x: 0,
+    y: 0,
+    radius: 12, // Slightly smaller relative to world
+    vx: 0,
+    vy: 0,
+    state: 'stuck',
+    color: '#00ff88'
+};
+
 let walls = [];
 let highestGenY = 0;
 let tiltVector = { x: 0, y: 0, magnitude: 0, angle: 0 };
@@ -55,34 +70,23 @@ function initHost() {
     isHost = true;
     hostView.classList.remove('hidden');
 
-    // Initialize PeerJS
     peer = new Peer();
 
     peer.on('open', (id) => {
         console.log('My peer ID is: ' + id);
         const url = `${window.location.href.split('?')[0]}?host=${id}`;
-
-        // Generate QR Code
-        new QRCode(qrcodeDiv, {
-            text: url,
-            width: 180,
-            height: 180
-        });
-
+        new QRCode(qrcodeDiv, { text: url, width: 180, height: 180 });
         connectionStatus.textContent = "Scan with phone to start";
     });
 
     peer.on('connection', (c) => {
         conn = c;
-        console.log('Connected to controller');
         connectionStatus.textContent = "Controller Connected!";
-
         setTimeout(() => {
             connectionScreen.style.opacity = 0;
             setTimeout(() => connectionScreen.classList.add('hidden'), 500);
             startGame();
         }, 1000);
-
         setupHostDataListener();
     });
 
@@ -104,9 +108,14 @@ function setupHostDataListener() {
 function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
+
+    // Calculate World Dimensions based on Zoom
+    worldWidth = canvas.width / ZOOM;
+    worldHeight = canvas.height / ZOOM;
+
     if (gameState === 'start') {
-        player.x = canvas.width / 2;
-        player.y = canvas.height - 100;
+        player.x = worldWidth / 2;
+        player.y = worldHeight - 150;
         cameraY = 0;
         generateInitialWalls();
     }
@@ -114,78 +123,151 @@ function resize() {
 
 function generateInitialWalls() {
     walls = [];
-    walls.push({ x: 0, y: canvas.height - 50, w: canvas.width, h: 50, type: 'floor' });
-    highestGenY = canvas.height - 50;
-    for (let i = 0; i < 10; i++) generateNextWall();
+    // Floor
+    walls.push({ x: 0, y: worldHeight - 50, w: worldWidth, h: 100, type: 'floor' });
+    highestGenY = worldHeight - 50;
+
+    for (let i = 0; i < 15; i++) generateNextWall();
 }
 
 function generateNextWall() {
-    const gap = 100 + Math.random() * 150;
-    const y = highestGenY - gap;
-    const w = 50 + Math.random() * 100;
-    const x = Math.random() * (canvas.width - w);
-    walls.push({ x, y, w, h: 20, type: 'wall' });
+    const gapY = 150 + Math.random() * 200; // Vertical distance
+    const y = highestGenY - gapY;
+
+    const typeRoll = Math.random();
+    let type = 'normal';
+    if (typeRoll > 0.7) type = 'bouncy';
+    if (typeRoll > 0.9) type = 'vertical'; // Rare vertical walls
+
+    let w, h, x;
+
+    if (type === 'vertical') {
+        w = 30;
+        h = 200 + Math.random() * 200;
+        x = Math.random() * (worldWidth - w);
+    } else {
+        // Horizontal (normal or bouncy)
+        w = 100 + Math.random() * 200;
+        h = 30;
+        x = Math.random() * (worldWidth - w);
+    }
+
+    walls.push({ x, y, w, h, type });
     highestGenY = y;
 }
 
 function jump() {
     if (player.state !== 'stuck') return;
 
-    // Jump opposite to tilt
     const force = Math.min(tiltVector.magnitude * JUMP_FORCE_MULTIPLIER, MAX_JUMP_FORCE);
-    const jumpAngle = tiltVector.angle + Math.PI; // Opposite direction
+    const jumpAngle = tiltVector.angle + Math.PI;
 
     player.vx = Math.cos(jumpAngle) * force;
     player.vy = Math.sin(jumpAngle) * force;
     player.state = 'air';
 
-    // Send haptic feedback command back to controller
-    if (conn) {
-        conn.send({ type: 'vibrate', duration: Math.floor(force * 5) });
-    }
+    if (conn) conn.send({ type: 'vibrate', duration: Math.floor(force * 5) });
 }
 
 function update(dt) {
     if (gameState !== 'playing') return;
 
+    // Physics Sub-stepping
     if (player.state === 'air') {
+        const stepDt = 1 / SUBSTEPS; // Normalized step
+
+        // Apply Gravity once per frame
         player.vy += GRAVITY;
         player.vx *= FRICTION;
-        player.x += player.vx;
-        player.y += player.vy;
 
-        checkCollisions();
+        for (let i = 0; i < SUBSTEPS; i++) {
+            player.x += player.vx * stepDt;
+            player.y += player.vy * stepDt;
 
-        if (player.x < 0 || player.x > canvas.width) player.vx *= -0.8;
-        if (player.y > cameraY + canvas.height + 100) gameOver();
+            // Wall Collisions
+            if (checkCollisions()) break; // If stuck, stop stepping
+
+            // World Boundaries
+            if (player.x - player.radius < 0) {
+                player.x = player.radius;
+                player.vx *= -0.8;
+            } else if (player.x + player.radius > worldWidth) {
+                player.x = worldWidth - player.radius;
+                player.vx *= -0.8;
+            }
+        }
+
+        // Game Over
+        if (player.y - player.radius > cameraY + worldHeight + 200) gameOver();
     }
 
-    const targetY = player.y - canvas.height * 0.6;
+    // Camera
+    const targetY = player.y - worldHeight * 0.6;
     if (targetY < cameraY) cameraY += (targetY - cameraY) * 0.1;
 
+    // Score
     const currentHeight = Math.floor(-player.y / 10);
     if (currentHeight > score) {
         score = currentHeight;
         scoreValue.textContent = score + 'm';
     }
 
-    if (cameraY < highestGenY + 800) generateNextWall();
-    walls = walls.filter(w => w.y < cameraY + canvas.height + 100);
+    // Gen & Cleanup
+    if (cameraY < highestGenY + 1000) generateNextWall();
+    walls = walls.filter(w => w.y < cameraY + worldHeight + 200);
 }
 
 function checkCollisions() {
     for (let w of walls) {
+        // AABB vs Circle
         let closestX = Math.max(w.x, Math.min(player.x, w.x + w.w));
         let closestY = Math.max(w.y, Math.min(player.y, w.y + w.h));
-        let dist = Math.hypot(player.x - closestX, player.y - closestY);
+
+        let dx = player.x - closestX;
+        let dy = player.y - closestY;
+        let dist = Math.sqrt(dx * dx + dy * dy);
 
         if (dist < player.radius) {
-            player.state = 'stuck';
-            player.vx = 0;
-            player.vy = 0;
-            return;
+            // Collision!
+
+            // 1. Depenetrate (Push out)
+            const overlap = player.radius - dist;
+            let nx, ny;
+
+            if (dist === 0) {
+                // Center inside wall, push up
+                nx = 0; ny = -1;
+            } else {
+                nx = dx / dist;
+                ny = dy / dist;
+            }
+
+            player.x += nx * overlap;
+            player.y += ny * overlap;
+
+            // 2. Handle Reaction
+            if (w.type === 'bouncy') {
+                // Reflect velocity: V_new = V_old - 2(V_old . N) * N
+                const dot = player.vx * nx + player.vy * ny;
+                player.vx = player.vx - 2 * dot * nx;
+                player.vy = player.vy - 2 * dot * ny;
+
+                // Add some energy loss or gain?
+                player.vx *= 1.1; // Super bounce!
+                player.vy *= 1.1;
+
+                // Play sound or effect?
+                return false; // Keep moving in this frame (don't stop)
+            } else {
+                // Stick
+                player.state = 'stuck';
+                player.vx = 0;
+                player.vy = 0;
+                return true; // Stop physics steps
+            }
         }
     }
+    return false;
 }
 
 function gameOver() {
@@ -199,27 +281,39 @@ function resetGame() {
     score = 0;
     scoreValue.textContent = '0m';
     resize();
-    // Don't show QR code again, just wait for jump to restart? 
-    // Or just let them play again immediately.
     gameState = 'playing';
 }
 
 function draw() {
+    // Clear with Zoom
     ctx.fillStyle = '#0a0a12';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.save();
+    ctx.scale(ZOOM, ZOOM); // Apply Zoom
     ctx.translate(0, -cameraY);
 
     // Draw Walls
-    ctx.shadowBlur = 10;
-    ctx.shadowColor = 'rgba(0, 204, 255, 0.5)';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-    ctx.strokeStyle = '#00ccff';
-    ctx.lineWidth = 2;
     for (let w of walls) {
         ctx.beginPath();
         ctx.roundRect(w.x, w.y, w.w, w.h, 5);
+
+        if (w.type === 'bouncy') {
+            ctx.fillStyle = 'rgba(255, 0, 255, 0.2)';
+            ctx.strokeStyle = '#ff00ff';
+            ctx.shadowColor = '#ff00ff';
+        } else if (w.type === 'vertical') {
+            ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
+            ctx.strokeStyle = '#ffff00';
+            ctx.shadowColor = '#ffff00';
+        } else {
+            ctx.fillStyle = 'rgba(0, 255, 255, 0.1)';
+            ctx.strokeStyle = '#00ccff';
+            ctx.shadowColor = '#00ccff';
+        }
+
+        ctx.shadowBlur = 10;
+        ctx.lineWidth = 2;
         ctx.fill();
         ctx.stroke();
     }
@@ -232,19 +326,17 @@ function draw() {
     ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
     ctx.fill();
 
-    // Draw Aim Line (if stuck)
+    // Aim Line
     if (player.state === 'stuck') {
+        const jumpAngle = tiltVector.angle + Math.PI;
+        const lineLen = tiltVector.magnitude * 3;
+
         ctx.beginPath();
         ctx.moveTo(player.x, player.y);
-        // Draw line in direction of tilt (opposite of jump)
-        // Actually user wants to see where they aim.
-        // If tilt is "down", jump is "up".
-        // Let's show the trajectory (Jump direction)
-        const jumpAngle = tiltVector.angle + Math.PI;
-        const lineLen = tiltVector.magnitude * 2;
         ctx.lineTo(player.x + Math.cos(jumpAngle) * lineLen, player.y + Math.sin(jumpAngle) * lineLen);
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-        ctx.setLineDash([5, 5]);
+        ctx.lineWidth = 2;
+        ctx.setLineDash([10, 10]);
         ctx.stroke();
         ctx.setLineDash([]);
     }
@@ -264,21 +356,16 @@ function startGame() {
     gameState = 'playing';
 }
 
-
 // --- CONTROLLER LOGIC ---
 function initController(hostId) {
     controllerView.classList.remove('hidden');
-
     peer = new Peer();
-
     peer.on('open', (id) => {
         conn = peer.connect(hostId);
-
         conn.on('open', () => {
             console.log('Connected to host');
-            startOverlay.style.display = 'flex'; // Show start button
+            startOverlay.style.display = 'flex';
         });
-
         conn.on('data', (data) => {
             if (data.type === 'vibrate' && navigator.vibrate) {
                 navigator.vibrate(data.duration);
@@ -287,15 +374,11 @@ function initController(hostId) {
     });
 
     enableSensorsBtn.addEventListener('click', () => {
-        // Request Permissions
         if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
             DeviceOrientationEvent.requestPermission()
                 .then(response => {
-                    if (response === 'granted') {
-                        startController();
-                    } else {
-                        alert('Permission denied');
-                    }
+                    if (response === 'granted') startController();
+                    else alert('Permission denied');
                 })
                 .catch(console.error);
         } else {
@@ -307,27 +390,13 @@ function initController(hostId) {
 function startController() {
     startOverlay.style.display = 'none';
     window.addEventListener('deviceorientation', handleOrientation);
-
-    jumpBtn.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        sendJump();
-    });
-    jumpBtn.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        sendJump();
-    });
+    jumpBtn.addEventListener('touchstart', (e) => { e.preventDefault(); sendJump(); });
+    jumpBtn.addEventListener('mousedown', (e) => { e.preventDefault(); sendJump(); });
 }
 
 function handleOrientation(event) {
-    let gamma = event.gamma || 0; // Left/Right
-    let beta = event.beta || 0;   // Front/Back
-
-    // Calculate vector
-    // Assuming flat phone:
-    // Beta: -180 to 180. Flat is 0. Tilted forward (top down) is positive? No, usually top up is negative?
-    // Actually:
-    // Beta: Front-to-back. 0 is flat. Positive is top-down? 
-    // Gamma: Left-to-right. 0 is flat.
+    let gamma = event.gamma || 0;
+    let beta = event.beta || 0;
 
     const x = gamma * TILT_SENSITIVITY;
     const y = beta * TILT_SENSITIVITY;
@@ -336,14 +405,8 @@ function handleOrientation(event) {
     const angle = Math.atan2(y, x);
 
     tiltVector = { x, y, magnitude, angle };
-
-    // Update UI
     updateArrowUI();
-
-    // Send to Host
-    if (conn && conn.open) {
-        conn.send({ type: 'tilt', vector: tiltVector });
-    }
+    if (conn && conn.open) conn.send({ type: 'tilt', vector: tiltVector });
 }
 
 function updateArrowUI() {
@@ -353,9 +416,7 @@ function updateArrowUI() {
 }
 
 function sendJump() {
-    if (conn && conn.open) {
-        conn.send({ type: 'jump' });
-    }
+    if (conn && conn.open) conn.send({ type: 'jump' });
 }
 
 // Start
