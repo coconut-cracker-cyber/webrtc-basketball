@@ -9,10 +9,15 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+
+    <!-- External Libraries -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 
 <body>
-    <div id="game-container">
+    <!-- HOST VIEW (Desktop) -->
+    <div id="host-view" class="hidden">
         <canvas id="gameCanvas"></canvas>
 
         <div id="ui-layer">
@@ -21,20 +26,34 @@
                 <span id="score-value">0m</span>
             </div>
 
-            <div id="start-screen">
-                <h1>Sticky Slime</h1>
-                <p>Tilt to aim. Tap Jump to fly.</p>
-                <button id="start-btn">START GAME</button>
-            </div>
-
-            <div id="game-controls" class="hidden">
-                <div id="tilt-indicator">
-                    <div id="arrow"></div>
+            <div id="connection-screen">
+                <div class="glass-panel">
+                    <h1>Sticky Slime</h1>
+                    <p>Scan to Connect Controller</p>
+                    <div id="qrcode"></div>
+                    <p class="status" id="connection-status">Waiting for phone...</p>
                 </div>
-                <button id="jump-btn">JUMP</button>
             </div>
         </div>
     </div>
+
+    <!-- CONTROLLER VIEW (Phone) -->
+    <div id="controller-view" class="hidden">
+        <div id="controller-container">
+            <div id="tilt-display">
+                <div id="tilt-ring">
+                    <div id="arrow"></div>
+                </div>
+                <p>Tilt to Aim</p>
+            </div>
+
+            <button id="jump-btn">JUMP</button>
+        </div>
+        <div id="start-overlay">
+            <button id="enable-sensors-btn">TAP TO START</button>
+        </div>
+    </div>
+
     <script src="script.js"></script>
 </body>
 

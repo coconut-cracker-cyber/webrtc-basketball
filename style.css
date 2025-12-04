@@ -27,10 +27,15 @@ html {
     color: var(--text-color);
 }
 
-#game-container {
-    position: relative;
+.hidden {
+    display: none !important;
+}
+
+/* HOST VIEW */
+#host-view {
     width: 100%;
     height: 100%;
+    position: relative;
 }
 
 canvas {
@@ -46,129 +51,154 @@ canvas {
     width: 100%;
     height: 100%;
     pointer-events: none;
-    /* Let touches pass through to canvas if needed, but we have buttons */
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
 }
 
 #score-container {
-    padding: 20px;
+    position: absolute;
+    top: 20px;
+    left: 20px;
     font-size: 24px;
     font-weight: 700;
     text-shadow: 0 0 10px var(--primary-glow);
-    z-index: 10;
 }
 
-#start-screen {
+#connection-screen {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     background: rgba(10, 10, 18, 0.8);
     backdrop-filter: blur(10px);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    z-index: 20;
+    z-index: 100;
     pointer-events: auto;
+    transition: opacity 0.5s;
 }
 
-h1 {
-    font-size: 48px;
-    margin-bottom: 10px;
-    background: linear-gradient(to right, #00ff88, #00ccff);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    text-transform: uppercase;
-    letter-spacing: 2px;
+.glass-panel {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    padding: 40px;
+    border-radius: 20px;
+    text-align: center;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
 
-p {
-    font-size: 18px;
+#qrcode {
+    background: white;
+    padding: 10px;
+    border-radius: 10px;
+    margin: 20px auto;
+    width: fit-content;
+}
+
+#qrcode img {
+    display: block;
+}
+
+.status {
     color: #ccc;
-    margin-bottom: 40px;
+    font-size: 14px;
+    margin-top: 10px;
 }
 
-button {
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    color: white;
-    padding: 15px 40px;
-    font-size: 20px;
-    font-family: var(--font-main);
-    font-weight: 700;
-    border-radius: 30px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    text-transform: uppercase;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
-}
-
-button:active {
-    transform: scale(0.95);
-    background: var(--primary-color);
-    color: #000;
-}
-
-#game-controls {
-    position: absolute;
-    bottom: 40px;
-    left: 0;
+/* CONTROLLER VIEW */
+#controller-view {
     width: 100%;
+    height: 100%;
+    background: #111;
     display: flex;
     flex-direction: column;
     align-items: center;
-    pointer-events: auto;
-    gap: 20px;
+    justify-content: space-between;
+    padding: 40px 20px;
 }
 
-.hidden {
-    display: none !important;
+#controller-container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-evenly;
 }
 
-#tilt-indicator {
-    width: 100px;
-    height: 100px;
+#tilt-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+}
+
+#tilt-ring {
+    width: 150px;
+    height: 150px;
     border-radius: 50%;
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
+    border: 2px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.05);
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
-    position: relative;
-    backdrop-filter: blur(5px);
 }
 
 #arrow {
     width: 0;
     height: 0;
-    border-left: 10px solid transparent;
-    border-right: 10px solid transparent;
-    border-bottom: 20px solid var(--primary-color);
+    border-left: 15px solid transparent;
+    border-right: 15px solid transparent;
+    border-bottom: 30px solid var(--primary-color);
     position: absolute;
     transform-origin: center bottom;
-    /* Transformation will be applied via JS */
+    filter: drop-shadow(0 0 10px var(--primary-color));
 }
 
 #jump-btn {
-    width: 120px;
-    height: 120px;
+    width: 200px;
+    height: 200px;
     border-radius: 50%;
     background: linear-gradient(135deg, var(--primary-color), #00ccff);
     border: none;
-    box-shadow: 0 0 20px var(--primary-glow);
-    font-size: 24px;
+    box-shadow: 0 0 30px var(--primary-glow);
+    font-size: 32px;
+    font-weight: 800;
     color: #000;
+    font-family: var(--font-main);
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 20px;
+    cursor: pointer;
+    transition: transform 0.1s;
+    text-transform: uppercase;
 }
 
 #jump-btn:active {
-    transform: scale(0.9);
-    box-shadow: 0 0 10px var(--primary-glow);
+    transform: scale(0.95);
+    background: linear-gradient(135deg, #fff, var(--primary-color));
+}
+
+#start-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+}
+
+#enable-sensors-btn {
+    background: var(--primary-color);
+    border: none;
+    padding: 20px 40px;
+    font-size: 20px;
+    font-weight: bold;
+    border-radius: 30px;
+    color: #000;
 }
