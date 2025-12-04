@@ -1,53 +1,40 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>WebRTC Basketball 2.5D</title>
-
-    <!-- Externe Bibliotheken für QR-Code und WebRTC (PeerJS) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
-
+    <title>Sticky Slime Jump</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
 
-    <!-- DESKTOP GAME SCREEN -->
-    <div id="game-screen">
-        <canvas id="canvas"></canvas>
         <div id="ui-layer">
-            <h1>Streetball 2.5D</h1>
-            <p>Punkte: <span id="score">0</span></p>
-            <p>Scanne, um beizutreten:</p>
-            <div id="qrcode"></div>
-            <p style="font-size: 0.8rem; margin-top:5px;">Status: <span id="desktop-status">Warte auf
-                    Verbindung...</span></p>
+            <div id="score-container">
+                <span id="score-label">HEIGHT</span>
+                <span id="score-value">0m</span>
+            </div>
+
+            <div id="start-screen">
+                <h1>Sticky Slime</h1>
+                <p>Tilt to aim. Tap Jump to fly.</p>
+                <button id="start-btn">START GAME</button>
+            </div>
+
+            <div id="game-controls" class="hidden">
+                <div id="tilt-indicator">
+                    <div id="arrow"></div>
+                </div>
+                <button id="jump-btn">JUMP</button>
+            </div>
         </div>
     </div>
-
-    <!-- MOBILE CONTROLLER SCREEN -->
-    <div id="controller-screen">
-        <div class="ball-preview" id="visual-feedback"></div>
-        <h2>Controller</h2>
-        <p>Halte das Handy wie einen Ball.</p>
-        <p>Mache eine Wurfbewegung nach vorne!</p>
-
-        <!-- iOS benötigt einen Button für Sensor-Rechte -->
-        <button class="btn" id="btn-connect">Starten / Sensoren aktivieren</button>
-        <p id="status">Nicht verbunden</p>
-
-        <!-- Visual Feedback Canvas -->
-        <canvas id="feedback-canvas" width="300" height="300"
-            style="background: #eee; border-radius: 10px; margin: 10px auto; display: block;"></canvas>
-        <p id="instruction-text" style="font-size: 0.9rem; color: #333;">Halte das Handy senkrecht. Wirf mit einer
-            Bewegung nach oben und klappe das Handgelenk nach vorne!</p>
-
-        <div id="debug" style="font-size: 0.7rem; color: #555; margin-top: 20px;"></div>
-    </div>
-
     <script src="script.js"></script>
 </body>
 
