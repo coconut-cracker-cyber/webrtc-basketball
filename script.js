@@ -1,5 +1,3 @@
-
-
 // DOM Elements
 const hostView = document.getElementById('host-view');
 const controllerView = document.getElementById('controller-view');
@@ -13,19 +11,23 @@ const ctx = canvas.getContext('2d');
 const scoreValue = document.getElementById('score-value');
 
 // Controller State
-const arrow = document.getElementById('arrow');
+const controllerArrow = document.getElementById('controller-arrow');
+const puck = document.getElementById('puck');
 const jumpBtn = document.getElementById('jump-btn');
 const startOverlay = document.getElementById('start-overlay');
 const enableSensorsBtn = document.getElementById('enable-sensors-btn');
+const statusDot = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+const controllerScore = document.getElementById('controller-score');
 
 // Constants & Config
-const ZOOM = 0.6; // Zoom out
+const ZOOM = 0.6;
 const GRAVITY = 0.5;
 const FRICTION = 0.99;
 const JUMP_FORCE_MULTIPLIER = 0.45;
 const MAX_JUMP_FORCE = 35;
 const TILT_SENSITIVITY = 1.5;
-const SUBSTEPS = 8; // Physics accuracy
+const SUBSTEPS = 16; // Increased from 8 to 16 for better collision
 
 // Variables
 let peer;
@@ -42,7 +44,7 @@ let worldHeight = 0;
 const player = {
     x: 0,
     y: 0,
-    radius: 12, // Slightly smaller relative to world
+    radius: 12,
     vx: 0,
     vy: 0,
     state: 'stuck',
@@ -108,8 +110,6 @@ function setupHostDataListener() {
 function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-
-    // Calculate World Dimensions based on Zoom
     worldWidth = canvas.width / ZOOM;
     worldHeight = canvas.height / ZOOM;
 
@@ -123,21 +123,19 @@ function resize() {
 
 function generateInitialWalls() {
     walls = [];
-    // Floor
     walls.push({ x: 0, y: worldHeight - 50, w: worldWidth, h: 100, type: 'floor' });
     highestGenY = worldHeight - 50;
-
     for (let i = 0; i < 15; i++) generateNextWall();
 }
 
 function generateNextWall() {
-    const gapY = 150 + Math.random() * 200; // Vertical distance
+    const gapY = 150 + Math.random() * 200;
     const y = highestGenY - gapY;
 
     const typeRoll = Math.random();
     let type = 'normal';
     if (typeRoll > 0.7) type = 'bouncy';
-    if (typeRoll > 0.9) type = 'vertical'; // Rare vertical walls
+    if (typeRoll > 0.9) type = 'vertical';
 
     let w, h, x;
 
@@ -146,7 +144,6 @@ function generateNextWall() {
         h = 200 + Math.random() * 200;
         x = Math.random() * (worldWidth - w);
     } else {
-        // Horizontal (normal or bouncy)
         w = 100 + Math.random() * 200;
         h = 30;
         x = Math.random() * (worldWidth - w);
@@ -169,23 +166,58 @@ function jump() {
     if (conn) conn.send({ type: 'vibrate', duration: Math.floor(force * 5) });
 }
 
+// --- PHYSICS ENGINE (Raycast / Swept AABB) ---
 function update(dt) {
     if (gameState !== 'playing') return;
 
-    // Physics Sub-stepping
     if (player.state === 'air') {
-        const stepDt = 1 / SUBSTEPS; // Normalized step
-
-        // Apply Gravity once per frame
+        // Apply Gravity
         player.vy += GRAVITY;
         player.vx *= FRICTION;
 
-        for (let i = 0; i < SUBSTEPS; i++) {
-            player.x += player.vx * stepDt;
-            player.y += player.vy * stepDt;
+        // Sub-stepping for precision
+        const stepDt = 1 / SUBSTEPS;
 
-            // Wall Collisions
-            if (checkCollisions()) break; // If stuck, stop stepping
+        for (let i = 0; i < SUBSTEPS; i++) {
+            // Calculate proposed new position for this substep
+            const nextX = player.x + player.vx * stepDt;
+            const nextY = player.y + player.vy * stepDt;
+
+            // Check for collision along the path (Raycast/Swept check)
+            const collision = checkSweptCollision(player.x, player.y, nextX, nextY, player.radius);
+
+            if (collision) {
+                // Move to collision point
+                player.x = collision.x;
+                player.y = collision.y;
+
+                if (collision.wall.type === 'bouncy') {
+                    // Reflect
+                    const nx = collision.nx;
+                    const ny = collision.ny;
+                    const dot = player.vx * nx + player.vy * ny;
+
+                    player.vx = (player.vx - 2 * dot * nx) * 1.1; // Bounce with energy gain
+                    player.vy = (player.vy - 2 * dot * ny) * 1.1;
+
+                    // Push out slightly to prevent getting stuck in next frame
+                    player.x += nx * 0.1;
+                    player.y += ny * 0.1;
+
+                    // Don't stop stepping, keep moving with new velocity? 
+                    // For simplicity, just consume this substep and continue next with new velocity
+                } else {
+                    // Stick
+                    player.state = 'stuck';
+                    player.vx = 0;
+                    player.vy = 0;
+                    break; // Stop all movement
+                }
+            } else {
+                // No collision, move normally
+                player.x = nextX;
+                player.y = nextY;
+            }
 
             // World Boundaries
             if (player.x - player.radius < 0) {
@@ -197,7 +229,6 @@ function update(dt) {
             }
         }
 
-        // Game Over
         if (player.y - player.radius > cameraY + worldHeight + 200) gameOver();
     }
 
@@ -210,64 +241,138 @@ function update(dt) {
     if (currentHeight > score) {
         score = currentHeight;
         scoreValue.textContent = score + 'm';
+        // Send score to controller occasionally
+        if (conn && conn.open && score % 10 === 0) {
+            conn.send({ type: 'score', value: score + 'm' });
+        }
     }
 
-    // Gen & Cleanup
     if (cameraY < highestGenY + 1000) generateNextWall();
     walls = walls.filter(w => w.y < cameraY + worldHeight + 200);
 }
 
-function checkCollisions() {
+// Robust Collision Detection
+function checkSweptCollision(startX, startY, endX, endY, radius) {
+    // 1. Broad Phase: AABB of the move
+    const minX = Math.min(startX, endX) - radius;
+    const maxX = Math.max(startX, endX) + radius;
+    const minY = Math.min(startY, endY) - radius;
+    const maxY = Math.max(startY, endY) + radius;
+
+    let closestHit = null;
+    let minT = 1.0; // Time of impact (0 to 1)
+
     for (let w of walls) {
-        // AABB vs Circle
-        let closestX = Math.max(w.x, Math.min(player.x, w.x + w.w));
-        let closestY = Math.max(w.y, Math.min(player.y, w.y + w.h));
+        // Broad phase check
+        if (w.x > maxX || w.x + w.w < minX || w.y > maxY || w.y + w.h < minY) continue;
 
-        let dx = player.x - closestX;
-        let dy = player.y - closestY;
-        let dist = Math.sqrt(dx * dx + dy * dy);
+        // 2. Narrow Phase: AABB vs Moving Circle
+        // Simplified: Clamp point on rect to circle center line
+        // We check if the line segment (startX, startY) -> (endX, endY) intersects the "expanded" rectangle (minkowski sum)
+        // Actually, simpler: Find the closest point on the wall to the *segment*.
 
-        if (dist < player.radius) {
-            // Collision!
+        // Let's use a continuous logic:
+        // Find time 't' where distance(Circle(t), Rect) <= 0
 
-            // 1. Depenetrate (Push out)
-            const overlap = player.radius - dist;
-            let nx, ny;
+        // Simplified Raycast approach:
+        // Check intersection of segment with expanded rect bounds
+        // Expand rect by radius
+        const expandedX = w.x - radius;
+        const expandedY = w.y - radius;
+        const expandedW = w.w + radius * 2;
+        const expandedH = w.h + radius * 2;
 
-            if (dist === 0) {
-                // Center inside wall, push up
-                nx = 0; ny = -1;
+        // Ray vs AABB (Liang-Barsky or similar)
+        // dx, dy
+        const dx = endX - startX;
+        const dy = endY - startY;
+
+        // p = start + t * d
+        // Check x-slabs
+        let tNear = 0;
+        let tFar = 1;
+        let nx = 0, ny = 0; // Normals at impact
+
+        // X Axis
+        if (dx === 0) {
+            if (startX < expandedX || startX > expandedX + expandedW) continue; // Parallel and outside
+        } else {
+            let t1 = (expandedX - startX) / dx;
+            let t2 = (expandedX + expandedW - startX) / dx;
+
+            if (t1 > t2) [t1, t2] = [t2, t1]; // Swap
+
+            if (t1 > tNear) { tNear = t1; nx = -1; ny = 0; } // Hit left
+            if (t2 < tFar) tFar = t2;
+
+            if (tNear > tFar || tFar < 0) continue;
+        }
+
+        // Y Axis
+        if (dy === 0) {
+            if (startY < expandedY || startY > expandedY + expandedH) continue;
+        } else {
+            let t1 = (expandedY - startY) / dy;
+            let t2 = (expandedY + expandedH - startY) / dy;
+
+            if (t1 > t2) [t1, t2] = [t2, t1];
+
+            // Refine normal based on which axis was last cut
+            if (t1 > tNear) {
+                tNear = t1;
+                nx = 0;
+                ny = -1; // Hit top (usually)
+            }
+            if (t2 < tFar) tFar = t2;
+
+            if (tNear > tFar || tFar < 0) continue;
+        }
+
+        // If we got here, there is an intersection at tNear
+        if (tNear < minT && tNear >= 0) {
+            // Verify it's a valid hit (not starting inside)
+            // Actually, if tNear is very small, we might be inside.
+
+            // Refine Normal:
+            // The above slab method gives a rough normal. 
+            // Let's determine exact side of the *original* rect we hit.
+            // Point of impact on expanded rect:
+            const impactX = startX + dx * tNear;
+            const impactY = startY + dy * tNear;
+
+            // Check if this impact point corresponds to a corner (rounded) or edge
+            // For this game, "Box" collision is fine, we don't need perfect rounded corners for the walls.
+            // Just treat walls as sharp rectangles.
+
+            // Determine exact normal based on relative position to center of wall
+            const cx = w.x + w.w / 2;
+            const cy = w.y + w.h / 2;
+            const px = impactX - cx;
+            const py = impactY - cy;
+
+            // Normalize to box size
+            const nx_raw = px / (w.w / 2 + radius);
+            const ny_raw = py / (w.h / 2 + radius);
+
+            let finalNx = 0, finalNy = 0;
+            if (Math.abs(nx_raw) > Math.abs(ny_raw)) {
+                finalNx = Math.sign(nx_raw);
             } else {
-                nx = dx / dist;
-                ny = dy / dist;
+                finalNy = Math.sign(ny_raw);
             }
 
-            player.x += nx * overlap;
-            player.y += ny * overlap;
-
-            // 2. Handle Reaction
-            if (w.type === 'bouncy') {
-                // Reflect velocity: V_new = V_old - 2(V_old . N) * N
-                const dot = player.vx * nx + player.vy * ny;
-                player.vx = player.vx - 2 * dot * nx;
-                player.vy = player.vy - 2 * dot * ny;
-
-                // Add some energy loss or gain?
-                player.vx *= 1.1; // Super bounce!
-                player.vy *= 1.1;
-
-                // Play sound or effect?
-                return false; // Keep moving in this frame (don't stop)
-            } else {
-                // Stick
-                player.state = 'stuck';
-                player.vx = 0;
-                player.vy = 0;
-                return true; // Stop physics steps
-            }
+            minT = tNear;
+            closestHit = {
+                x: startX + dx * tNear,
+                y: startY + dy * tNear,
+                nx: finalNx,
+                ny: finalNy,
+                wall: w
+            };
         }
     }
-    return false;
+
+    return closestHit;
 }
 
 function gameOver() {
@@ -285,15 +390,14 @@ function resetGame() {
 }
 
 function draw() {
-    // Clear with Zoom
     ctx.fillStyle = '#0a0a12';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.save();
-    ctx.scale(ZOOM, ZOOM); // Apply Zoom
+    ctx.scale(ZOOM, ZOOM);
     ctx.translate(0, -cameraY);
 
-    // Draw Walls
+    // Walls
     for (let w of walls) {
         ctx.beginPath();
         ctx.roundRect(w.x, w.y, w.w, w.h, 5);
@@ -318,7 +422,7 @@ function draw() {
         ctx.stroke();
     }
 
-    // Draw Player
+    // Player
     ctx.shadowBlur = 20;
     ctx.shadowColor = player.color;
     ctx.fillStyle = player.color;
@@ -359,16 +463,25 @@ function startGame() {
 // --- CONTROLLER LOGIC ---
 function initController(hostId) {
     controllerView.classList.remove('hidden');
+
     peer = new Peer();
+
     peer.on('open', (id) => {
         conn = peer.connect(hostId);
+
         conn.on('open', () => {
             console.log('Connected to host');
+            statusDot.classList.add('connected');
+            statusText.textContent = "Connected";
             startOverlay.style.display = 'flex';
         });
+
         conn.on('data', (data) => {
             if (data.type === 'vibrate' && navigator.vibrate) {
                 navigator.vibrate(data.duration);
+            }
+            if (data.type === 'score') {
+                controllerScore.textContent = data.value;
             }
         });
     });
@@ -405,19 +518,38 @@ function handleOrientation(event) {
     const angle = Math.atan2(y, x);
 
     tiltVector = { x, y, magnitude, angle };
-    updateArrowUI();
+    updateControllerUI();
+
     if (conn && conn.open) conn.send({ type: 'tilt', vector: tiltVector });
 }
 
-function updateArrowUI() {
+function updateControllerUI() {
+    // Update Arrow
     const rotationDeg = (tiltVector.angle * 180 / Math.PI) + 90;
     const scale = tiltVector.magnitude / 50;
-    arrow.style.transform = `rotate(${rotationDeg}deg) scaleY(${0.5 + scale * 0.5})`;
+    controllerArrow.style.transform = `rotate(${rotationDeg}deg) scaleY(${0.5 + scale * 0.5})`;
+
+    // Update Puck Position (Radar)
+    // Map tilt vector (x,y) to puck position
+    // Max magnitude is 100. Radar radius is 140px.
+    const maxRad = 120; // Keep inside
+    const px = (tiltVector.x / 100) * maxRad;
+    const py = (tiltVector.y / 100) * maxRad;
+
+    // Limit puck to circle
+    const dist = Math.sqrt(px * px + py * py);
+    let finalPx = px;
+    let finalPy = py;
+    if (dist > maxRad) {
+        finalPx = (px / dist) * maxRad;
+        finalPy = (py / dist) * maxRad;
+    }
+
+    puck.style.transform = `translate(${finalPx}px, ${finalPy}px)`;
 }
 
 function sendJump() {
     if (conn && conn.open) conn.send({ type: 'jump' });
 }
 
-// Start
 init();
