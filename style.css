@@ -46,7 +46,9 @@ html {
     width: 100%;
     height: 100%;
     z-index: 0;
-    filter: blur(30px) brightness(0.7);
+    /* Boost brightness and saturation to make the neon walls pop in the blur */
+    filter: blur(40px) brightness(3.0) saturate(200%);
+    opacity: 0.8;
 }
 
 #game-container {
@@ -61,7 +63,9 @@ html {
 
 #gameCanvas {
     display: block;
-    box-shadow: 0 0 50px rgba(0, 0, 0, 0.8);
+    box-shadow: 0 0 50px rgba(0, 0, 0, 0.9);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    background-color: var(--bg-color);
 }
 
 #ui-layer {
