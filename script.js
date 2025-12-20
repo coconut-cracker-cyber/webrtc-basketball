@@ -55,7 +55,7 @@ const player = {
 // Ominous Tide (Chaser)
 const tide = {
     y: 0,
-    speed: 0.2, // Base speed
+    speed: 0.1, // Base speed
     waveOffset: 0,
     color: '#ff0055'
 };
@@ -208,7 +208,7 @@ function generateInitialWalls() {
 function generateNextWall() {
     // Determine user progression: calculate a random vertical gap between walls
     // This controls the difficulty and pacing of the climb
-    const gapY = worldWidth * 0.2 + Math.random() * worldWidth * 0.5;
+    const gapY = worldWidth * 0.2 + Math.random() * worldWidth * 0.4;
 
     // Calculate the new wall's Y position relative to the highest generated wall so far
     // Note: The coordinate system is inverted likely (y decreases as you go up), 
@@ -225,13 +225,13 @@ function generateNextWall() {
 
     if (type === 'vertical') {
         // Vertical walls are thin and tall, good for rebounding
-        w = worldWidth * 0.06;
+        w = worldWidth * 0.05;
         h = worldWidth * 0.10 + Math.random() * worldWidth * 0.5;
         x = Math.random() * (worldWidth - w); // Random horizontal position
     } else {
         // Horizontal walls (normal or bouncy) are wider and serve as platforms
         w = worldWidth * 0.10 + Math.random() * worldWidth * 0.5;
-        h = worldWidth * 0.06;
+        h = worldWidth * 0.05;
         x = Math.random() * (worldWidth - w);
     }
 
@@ -301,13 +301,17 @@ function update(dt) {
     // --- CAMERA LOGIC ---
     // The camera follows the player as they climb up.
     // We target a position slightly below the player's current Y (worldHeight * 0.6 offset)
-    // to keep the player somewhat centered but with more space above to see where to jump next.
     const targetY = player.y - worldHeight * 0.6;
 
     // Smoothly interpolate the camera's current Y position towards the target Y.
-    // The factor 0.1 determines the "smoothness" or lag of the camera (Linear Interpolation / Lerp).
-    // We only move the camera if the target is higher (smaller Y value) to prevent moving down.
-    if (targetY < cameraY) cameraY += (targetY - cameraY) * 0.1;
+    const smoothness = 0.1;
+    cameraY += (targetY - cameraY) * smoothness;
+
+    // Clamp the camera so it doesn't go indefinitely down into the void
+    // The "buffer" here ensures we don't look too far past the tide
+    // tide.y is the top of the tide. We want the camera bottom (cameraY + worldHeight) to be near tide.y
+    const maxCameraY = tide.y - worldHeight + 100; // Allow seeing 100px into the tide
+    if (cameraY > maxCameraY) cameraY = maxCameraY;
 
     // Score
     const currentHeight = Math.floor(-player.y / 10);
@@ -402,19 +406,46 @@ function draw() {
         ctx.beginPath();
         ctx.roundRect(w.x, w.y, w.w, w.h, 5);
 
+        // Determine base style
+        let strokeColor, shadowColor, fillColor;
+
         if (w.type === 'bouncy') {
-            ctx.fillStyle = 'rgba(255, 0, 255, 0.2)';
-            ctx.strokeStyle = '#ff00ff';
-            ctx.shadowColor = '#ff00ff';
+            strokeColor = '#ff00ff';
+            fillColor = 'rgba(255, 0, 255, 0.2)';
         } else if (w.type === 'vertical') {
-            ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
-            ctx.strokeStyle = '#ffff00';
-            ctx.shadowColor = '#ffff00';
+            strokeColor = '#ffff00';
+            fillColor = 'rgba(255, 255, 0, 0.1)';
         } else {
-            ctx.fillStyle = 'rgba(0, 255, 255, 0.1)';
-            ctx.strokeStyle = '#00ccff';
-            ctx.shadowColor = '#00ccff';
+            strokeColor = '#00ccff';
+            fillColor = 'rgba(0, 255, 255, 0.1)';
         }
+
+        // Calculate proximity to tide
+        const distToTide = tide.y - (w.y + w.h);
+        const warningThreshold = worldHeight * 0.5; // Start warning when closer than half screen
+
+        if (distToTide < warningThreshold) {
+            // Lerp towards Danger Color (#ff0000)
+            // factor 0 = far, 1 = touching tide
+            let factor = 1 - Math.max(0, distToTide / warningThreshold);
+
+            // Simple approach: Check if very close, override color or mix
+            // We'll just override for strong effect if close
+            if (factor > 0) {
+                // Adjust outline to red/orange as it gets closer
+                // This is a rough visual blend for performance
+                strokeColor = distToTide < 100 ? '#ff0000' : (distToTide < 300 ? '#ff8800' : strokeColor);
+                // Boost shadow
+                shadowColor = strokeColor;
+            }
+            // Increase jitter/shake if very close?
+        }
+
+        shadowColor = strokeColor;
+
+        ctx.fillStyle = fillColor;
+        ctx.strokeStyle = strokeColor;
+        ctx.shadowColor = shadowColor;
 
         ctx.shadowBlur = 10;
         ctx.lineWidth = 2;
