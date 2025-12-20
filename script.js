@@ -159,7 +159,7 @@ function resize() {
     worldHeight = canvas.height / ZOOM;
 
     // Apply scaling/filter to background context once (persists until resize)
-    bgCtx.filter = 'blur(4px) brightness(2.0) saturate(150%)';
+    bgCtx.filter = 'brightness(2.0) saturate(150%)';
 
     if (gameState === 'start') {
         player.x = worldWidth / 2;
@@ -390,7 +390,6 @@ function draw() {
     }
 
     ctx.restore();
-
     // Use the main canvas as the source for the background
     // Optimize: Update background less frequently and apply filter on the small canvas
     if (bgCanvas.width > 0 && bgCanvas.height > 0) {
