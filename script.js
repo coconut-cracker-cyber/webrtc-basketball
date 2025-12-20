@@ -171,11 +171,11 @@ function resize() {
 
     // Adjust Physics based on World Width (scaling from original reference values)
     GRAVITY = worldWidth * 0.0008;
-    MAX_JUMP_FORCE = worldWidth * 0.055;
+    MAX_JUMP_FORCE = worldWidth * 0.030;
     JUMP_FORCE_MULTIPLIER = worldWidth * 0.00075;
 
     // Adjust Tide Speed relative to world
-    tide.speed = worldWidth * 0.0015;
+    tide.speed = worldWidth * 0.001;
 
     // Apply scaling/filter to background context once (persists until resize)
     bgCtx.filter = 'blur(' + worldWidth * 0.03 + 'px) brightness(2.0) saturate(150%)';
@@ -259,8 +259,59 @@ function update(dt) {
     if (gameState !== 'playing') return;
 
     // Update Tide
-    tide.y -= tide.speed;
+    // Catch Up Mechanic: If player is far ahead, speed up the tide
+    let currentSpeed = tide.speed;
+    const distToTide = tide.y - player.y;
+    // If player is more than 1.5 screens ahead
+    const catchUpThreshold = worldHeight * 1.5;
+
+    if (distToTide > catchUpThreshold) {
+        // Boost speed proportional to distance
+        // e.g. add 0.05% of the excess distance per frame
+        currentSpeed += (distToTide - catchUpThreshold) * 0.002;
+    }
+
+    tide.y -= currentSpeed;
     tide.waveOffset += 0.1;
+
+    // Visual Danger Indicator: Border Color
+    // Canvas Border reacts to tide proximity
+    // Distance from bottom of camera (screen bottom) to tide
+    const screenBottomY = cameraY + worldHeight;
+    const proximity = tide.y - screenBottomY; // Negative if tide is on screen, positive if below
+
+    // Warning starts when tide is within 300px of the screen bottom or ON screen
+    const dangerZone = 300;
+
+    // We want a value from 0 (safe) to 1 (danger/dead)
+    // If proximity > 300 (safe) -> 0
+    // If proximity < -worldHeight (dead/player covered) -> 1
+    // Actually simpler: just based on visual presence.
+    // If tide is ON SCREEN (proximity < 0), it gets redder.
+
+    if (proximity < dangerZone) {
+        // Map [300, -200] to [0, 1] opacity of red
+        // 300 -> 0 (White/Norm)
+        // 0 -> 0.6 (Red)
+        // -200 -> 1.0 (Deep Red)
+
+        let intensity = 1 - ((proximity + 200) / (dangerZone + 200));
+        intensity = Math.max(0, Math.min(1, intensity));
+
+        // Base border is rgba(255, 255, 255, 0.3)
+        // Danger is rgba(255, 0, 0, 0.8)
+
+        const r = Math.floor(255);
+        const g = Math.floor(255 * (1 - intensity));
+        const b = Math.floor(255 * (1 - intensity));
+        const a = 0.3 + (intensity * 0.5);
+
+        canvas.style.borderColor = `rgba(${r}, ${g}, ${b}, ${a})`;
+        canvas.style.boxShadow = `0 0 ${50 + intensity * 50}px rgba(${r}, 0, 0, ${0.9 * intensity})`;
+    } else {
+        canvas.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+        canvas.style.boxShadow = '0 0 50px rgba(0, 0, 0, 0.9)';
+    }
 
     // Tide Collision
     // If player touches the tide (plus a bit of leeway for the wave peaks)
@@ -406,46 +457,19 @@ function draw() {
         ctx.beginPath();
         ctx.roundRect(w.x, w.y, w.w, w.h, 5);
 
-        // Determine base style
-        let strokeColor, shadowColor, fillColor;
-
         if (w.type === 'bouncy') {
-            strokeColor = '#ff00ff';
-            fillColor = 'rgba(255, 0, 255, 0.2)';
+            ctx.fillStyle = 'rgba(255, 0, 255, 0.2)';
+            ctx.strokeStyle = '#ff00ff';
+            ctx.shadowColor = '#ff00ff';
         } else if (w.type === 'vertical') {
-            strokeColor = '#ffff00';
-            fillColor = 'rgba(255, 255, 0, 0.1)';
+            ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
+            ctx.strokeStyle = '#ffff00';
+            ctx.shadowColor = '#ffff00';
         } else {
-            strokeColor = '#00ccff';
-            fillColor = 'rgba(0, 255, 255, 0.1)';
+            ctx.fillStyle = 'rgba(0, 255, 255, 0.1)';
+            ctx.strokeStyle = '#00ccff';
+            ctx.shadowColor = '#00ccff';
         }
-
-        // Calculate proximity to tide
-        const distToTide = tide.y - (w.y + w.h);
-        const warningThreshold = worldHeight * 0.5; // Start warning when closer than half screen
-
-        if (distToTide < warningThreshold) {
-            // Lerp towards Danger Color (#ff0000)
-            // factor 0 = far, 1 = touching tide
-            let factor = 1 - Math.max(0, distToTide / warningThreshold);
-
-            // Simple approach: Check if very close, override color or mix
-            // We'll just override for strong effect if close
-            if (factor > 0) {
-                // Adjust outline to red/orange as it gets closer
-                // This is a rough visual blend for performance
-                strokeColor = distToTide < 100 ? '#ff0000' : (distToTide < 300 ? '#ff8800' : strokeColor);
-                // Boost shadow
-                shadowColor = strokeColor;
-            }
-            // Increase jitter/shake if very close?
-        }
-
-        shadowColor = strokeColor;
-
-        ctx.fillStyle = fillColor;
-        ctx.strokeStyle = strokeColor;
-        ctx.shadowColor = shadowColor;
 
         ctx.shadowBlur = 10;
         ctx.lineWidth = 2;
