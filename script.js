@@ -393,7 +393,7 @@ function draw() {
 
     // Use the main canvas as the source for the background
     // Optimize: Update background less frequently and apply filter on the small canvas
-    if (frameCount % 4 === 0 && bgCanvas.width > 0 && bgCanvas.height > 0) {
+    if (bgCanvas.width > 0 && bgCanvas.height > 0) {
         // Filter is already set in resize(), just draw
         bgCtx.drawImage(canvas, 0, 0, bgCanvas.width, bgCanvas.height);
     }
