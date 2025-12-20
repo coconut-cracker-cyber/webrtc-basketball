@@ -178,7 +178,7 @@ function resize() {
     // Optimize: Apply filters via CSS instead of Canvas Context. blur(${worldWidth * 0.03}px)
     // Context filters force re-rasterization every frame (slow). CSS filters run on the compositor (fast/GPU).
     bgCtx.filter = 'none';
-    bgCanvas.style.filter = ` brightness(2.0) saturate(150%)`;
+    bgCanvas.style.filter = `blur(${worldWidth * 0.03}px) brightness(2.0) saturate(150%)`;
 
     if (gameState === 'start') {
         player.x = worldWidth / 2;
@@ -263,12 +263,12 @@ function update(dt) {
     let currentSpeed = tide.speed;
     const distToTide = tide.y - player.y;
     // If player is more than 1.5 screens ahead
-    const catchUpThreshold = worldHeight * 1.5;
+    const catchUpThreshold = worldHeight * 0.5;
 
     if (distToTide > catchUpThreshold) {
         // Boost speed proportional to distance
         // e.g. add 0.05% of the excess distance per frame
-        currentSpeed += (distToTide - catchUpThreshold) * 0.002;
+        currentSpeed += (distToTide - catchUpThreshold) * 0.005;
     }
 
     tide.y -= currentSpeed;
