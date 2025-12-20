@@ -72,6 +72,21 @@ function initHost() {
     isHost = true;
     hostView.classList.remove('hidden');
 
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('debug')) {
+        console.log('Debug mode: visuals only');
+        connectionStatus.textContent = "Debug Mode";
+        setTimeout(() => {
+            connectionScreen.classList.add('hidden');
+            startGame();
+        }, 500);
+
+        resize();
+        window.addEventListener('resize', resize);
+        requestAnimationFrame(gameLoop);
+        return;
+    }
+
     peer = new Peer();
 
     peer.on('open', (id) => {
@@ -108,9 +123,12 @@ function setupHostDataListener() {
 }
 
 function resize() {
-    // Background always fills screen
-    bgCanvas.width = window.innerWidth;
-    bgCanvas.height = window.innerHeight;
+    // Optimize: Low-res background for blur effect (Fixes lag)
+    // We maintain aspect ratio of window to prevent distortion, 
+    // but scale down significantly.
+    const bgScale = 0.1;
+    bgCanvas.width = window.innerWidth * bgScale;
+    bgCanvas.height = window.innerHeight * bgScale;
 
     // Target Aspect Ratio 9:16 (0.5625)
     // Mobile default typically 9:16 or thinner
