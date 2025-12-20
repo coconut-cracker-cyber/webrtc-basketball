@@ -1,1 +1,1 @@
-# webrtc-basketball
+# webrtc-slimeball
