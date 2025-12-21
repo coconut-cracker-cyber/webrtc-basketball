@@ -22,10 +22,10 @@ const enableSensorsBtn = document.getElementById('enable-sensors-btn');
 
 // Constants & Config
 const ZOOM = 0.6; // Zoom out
-let GRAVITY = 0.5;
-const FRICTION = 0.96;
+let GRAVITY = 0.53;
+const FRICTION = 0.95;
 let JUMP_FORCE_MULTIPLIER = 0.28;
-let MAX_JUMP_FORCE = 35;
+let MAX_JUMP_FORCE = 30;
 const TILT_SENSITIVITY = 1.5;
 const SUBSTEPS = 8; // Physics accuracy
 
@@ -218,8 +218,8 @@ function generateNextWall() {
     // Determine the type of wall using a random roll
     const typeRoll = Math.random();
     let type = 'normal';
-    if (typeRoll > 0.75) type = 'bouncy'; // % chance for a bouncy wall
-    if (typeRoll > 0.83) type = 'vertical'; // % chance for a vertical wall (overrides bouncy)
+    if (typeRoll > 0.73) type = 'bouncy'; // % chance for a bouncy wall
+    if (typeRoll > 0.78) type = 'vertical'; // % chance for a vertical wall (overrides bouncy)
 
     let w, h, x;
 
