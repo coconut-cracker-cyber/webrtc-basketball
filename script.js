@@ -263,7 +263,7 @@ function update(dt) {
     let currentSpeed = tide.speed;
     const distToTide = tide.y - player.y;
     // If player is more than 1.5 screens ahead
-    const catchUpThreshold = worldHeight * 0.5;
+    const catchUpThreshold = worldHeight * 0.0;
 
     if (distToTide > catchUpThreshold) {
         // Boost speed proportional to distance
