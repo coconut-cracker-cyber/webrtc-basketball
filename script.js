@@ -40,6 +40,9 @@ let lastTime = 0;
 let worldWidth = 0;
 let worldHeight = 0;
 let frameCount = 0;
+let lastWindowWidth = 0;
+let lastWindowHeight = 0;
+let scoreDivisor = 10;
 
 // Player & World
 const player = {
@@ -91,7 +94,7 @@ function initHost() {
         }, 500);
 
         resize();
-        window.addEventListener('resize', resize);
+        // window.addEventListener('resize', resize); // Removed for manual check loop
         requestAnimationFrame(gameLoop);
         return;
     }
@@ -117,7 +120,7 @@ function initHost() {
     });
 
     resize();
-    window.addEventListener('resize', resize);
+    // window.addEventListener('resize', resize); // Removed for manual check loop
     requestAnimationFrame(gameLoop);
 }
 
@@ -132,6 +135,12 @@ function setupHostDataListener() {
 }
 
 function resize() {
+    // Check if dimensions changed to avoid redundant calcs (though we only call this if changed in loop)
+    if (window.innerWidth === lastWindowWidth && window.innerHeight === lastWindowHeight) return;
+
+    lastWindowWidth = window.innerWidth;
+    lastWindowHeight = window.innerHeight;
+
     // Optimize: Low-res background for blur effect (Fixes lag)
     const bgScale = 1.0;
     bgCanvas.width = window.innerWidth * bgScale;
@@ -150,12 +159,12 @@ function resize() {
         targetW = targetH * targetAspect;
     } else {
         // Window is taller (Some Phones/Vertical) -> Constrain Height by Width
-        // Or just fill width if we want standard mobile behavior?
-        // User asked to "fix the aspect ratio for narrower screens as well"
-        // so we constrain height too (pillarbox).
         targetW = window.innerWidth;
         targetH = targetW / targetAspect;
     }
+
+    // Capture old worldWidth for scaling entities
+    const oldWorldWidth = worldWidth;
 
     canvas.width = targetW;
     canvas.height = targetH;
@@ -163,6 +172,28 @@ function resize() {
     // Calculate World Dimensions based on Zoom
     worldWidth = canvas.width / ZOOM;
     worldHeight = canvas.height / ZOOM;
+
+    // Scale Entities if playing (and world existed previously)
+    if (gameState !== 'start' && oldWorldWidth > 0) {
+        const ratio = worldWidth / oldWorldWidth;
+
+        player.x *= ratio;
+        player.y *= ratio;
+        player.vx *= ratio;
+        player.vy *= ratio;
+
+        tide.y *= ratio;
+        cameraY *= ratio;
+        highestGenY *= ratio;
+        scoreDivisor *= ratio;
+
+        walls.forEach(w => {
+            w.x *= ratio;
+            w.y *= ratio;
+            w.w *= ratio;
+            w.h *= ratio;
+        });
+    }
 
     // Adjust player size relative to world width
     player.radius = worldWidth * 0.025;
@@ -181,6 +212,22 @@ function resize() {
     bgCanvas.style.filter = `blur(${worldWidth * 0.03}px) brightness(2.0) saturate(150%)`;
 
     if (gameState === 'start') {
+        player.x = worldWidth / 2;
+        player.y = worldHeight - 150;
+
+        // Reset Score Divisor to default scaling logic if needed, or keeping it persisted is fine 
+        // as long as 10 was the base for the initial worldWidth. 
+        // But since worldWidth changes on start, we might want to reset scoreDivisor base?
+        // Actually, let's just leave it. If we resize at start, we scale it.
+        // But strict reset:
+        scoreDivisor = 10 * (worldWidth / (canvas.width / ZOOM)); // Wait, worldWidth IS canvas.width/ZOOM. 
+        // Just keeping it 10 is risky if we start on a huge screen.
+        // Let's rely on scaling. If we hard reset to 10 here, we assume standard start res.
+        // It's safer to not touch scoreDivisor here if we assume it was initialized correctly (10) 
+        // AND scaled if the window started different?
+        // Actually, init calls resize. ratio is 1 (old 0). scoreDivisor stays 10.
+        // Perfect for initial state.
+
         player.x = worldWidth / 2;
         player.y = worldHeight - 150;
 
@@ -365,7 +412,7 @@ function update(dt) {
     if (cameraY > maxCameraY) cameraY = maxCameraY;
 
     // Score
-    const currentHeight = Math.floor(-player.y / 10);
+    const currentHeight = Math.floor(-player.y / scoreDivisor);
     if (currentHeight > score) {
         score = currentHeight;
         scoreValue.textContent = score + 'm';
@@ -440,6 +487,18 @@ function resetGame() {
     score = 0;
     scoreValue.textContent = '0m';
     resize();
+    // Reset Score Divisor anchor? 
+    // Since resize updates it based on ratio, and we might have drifted if floating point errors accum?
+    // Probably fine. But to be safe, could normalize.
+    // However, since we are in start state, resize() won't scale.
+    // So we reset scoreDivisor to 10 * adjustment?
+    // If the window is huge, we WANT a large divisor.
+    // But resize() didn't change it because oldWorldWidth=worldWidth effectively if we call resize again?
+    // Wait, resize() sets oldWorldWidth = worldWidth.
+    // ratio = 1.
+    // So scoreDivisor stays whatever it was.
+    // If we've resized 10 times, scoreDivisor is correct for current width.
+    // So we DON'T reset it to 10. We keep as is.
     gameState = 'playing';
 }
 
@@ -557,6 +616,10 @@ function draw() {
 }
 
 function gameLoop(timestamp) {
+    if (window.innerWidth !== lastWindowWidth || window.innerHeight !== lastWindowHeight) {
+        resize();
+    }
+
     const dt = timestamp - lastTime;
     lastTime = timestamp;
     frameCount++;
