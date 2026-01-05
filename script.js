@@ -1,738 +1,1183 @@
+/**
+ * Sticky Slime Jump - Game Logic
+ * 
+ * A physics-based vertical platformer using WebRTC for controller input.
+ * Refactored to use ES6 Classes and Design Patterns.
+ * 
+ * @author uiutv
+ * @version 2.0
+ */
 
+// ==========================================
+// 1. CONFIGURATION & CONSTANTS
+// ==========================================
 
-// DOM Elements
-const hostView = document.getElementById('host-view');
-const controllerView = document.getElementById('controller-view');
-const connectionScreen = document.getElementById('connection-screen');
-const connectionStatus = document.getElementById('connection-status');
-const qrcodeDiv = document.getElementById('qrcode');
-
-// Game State (Host)
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-const bgCanvas = document.getElementById('bg-canvas');
-const bgCtx = bgCanvas.getContext('2d');
-const scoreValue = document.getElementById('score-value');
-// Game Over UI
-const gameOverScreen = document.getElementById('game-over-screen');
-const finalScoreEl = document.getElementById('final-score');
-const restartBtn = document.getElementById('restart-btn');
-
-// Controller State
-const arrow = document.getElementById('arrow');
-const jumpBtn = document.getElementById('jump-btn');
-const startOverlay = document.getElementById('start-overlay');
-const enableSensorsBtn = document.getElementById('enable-sensors-btn');
-
-// Constants & Config
-const CONFIG = {
-    // Fixed visual/game constants (do not scale with screen size)
-    zoom: 0.6,
-    substeps: 8,
-    friction: 0.998,
-    tiltSensitivity: 1.5,
-    blur: 20, // Fixed blur in pixels for background effect
-
-    // Ratios relative to World Width (these scale with screen size)
-    ratios: {
-        gravity: 0.00060,
-        jumpForceMult: 0.0007,
-        maxJumpForce: 0.15,
-        tideSpeed: 0.001,
-        tideCatchup: 0.005,
-        wallGapMin: 0.2,
-        wallGapRange: 0.4,
-        wallHeight: 0.05,
-        wallWidthMin: 0.10,
-        wallWidthRange: 0.5,
-        playerRadius: 0.025
+/**
+ * Centralized Game Configuration.
+ * Contains all tunable constants and ratios.
+ * Implements the Singleton pattern effectively via a static object.
+ */
+const Config = {
+    /** Fixed visual constants that do not scale with screen size */
+    Visual: {
+        ZOOM: 0.6,
+        SUBSTEPS: 8,
+        FRICTION: 0.998,
+        TILT_SENSITIVITY: 1.5,
+        BG_BLUR: 'blur(1px) brightness(1.2) saturate(120%)',
+        BG_SCALE_RES: 0.15,
+        GLUE_THICKNESS: 4, // Visual thickness of glue
     },
 
-    colors: {
-        player: '#00ff88',
-        tide: '#ff0055',
-        wallNormal: { fill: 'rgba(0, 255, 255, 0.1)', stroke: '#00ccff', shadow: '#00ccff' },
-        wallBouncy: { fill: 'rgba(255, 0, 255, 0.2)', stroke: '#ff00ff', shadow: '#ff00ff' },
-        wallVertical: { fill: 'rgba(255, 255, 0, 0.1)', stroke: '#ffff00', shadow: '#ffff00' }
+    /** Ratios relative to World Width (Responsive Scalers) */
+    Ratios: {
+        GRAVITY: 0.00060,
+        JUMP_FORCE_MULT: 0.0007,
+        MAX_JUMP_FORCE: 0.15,
+        TIDE_SPEED: 0.001,
+        TIDE_CATCHUP: 0.005,
+        WALL_GAP_MIN: 0.2,
+        WALL_GAP_RANGE: 0.4,
+        WALL_HEIGHT: 0.05,
+        WALL_WIDTH_MIN: 0.10,
+        WALL_WIDTH_RANGE: 0.5,
+        PLAYER_RADIUS: 0.025,
+        INDICATOR_LENGTH: 0.15,
+        TIDE_WAVE_AMP: 0.015,
+        TIDE_GLITCH_SPIKE: 0.03,
+        TIDE_LINE_WIDTH: 0.003,
+        // New Ratios for responsive scaling
+        TIDE_START_OFFSET: 0.4,       // relative to World Height
+        TIDE_COLLISION_THRESHOLD: 0.03, // relative to World Width
+        CAMERA_LIMIT_PADDING: 0.1,    // relative to World Height
+        GEN_TRIGGER_DIST: 1.2,        // relative to World Height
+        CLEANUP_DIST: 0.3,            // relative to World Height
+        STICKY_DRAG: 1.5,             // Viscosity factor for sticky state
+        STICKY_RELEASE_FORCE: 0.5     // Required force to break free purely by movement
+    },
+
+    /** Color Palette */
+    Colors: {
+        PLAYER: '#00ff88',
+        TIDE_BASE: '#ff0055',
+        TIDE_STROKE: '#ff99aa',
+        TIDE_SHADOW: '#ff3366',
+        WALL_NORMAL: { fill: 'rgba(0, 255, 255, 0.1)', stroke: '#00ccff', shadow: '#00ccff' },
+        WALL_BOUNCY: { fill: 'rgba(255, 0, 255, 0.2)', stroke: '#ff00ff', shadow: '#ff00ff' },
+        WALL_VERTICAL: { fill: 'rgba(255, 255, 0, 0.1)', stroke: '#ffff00', shadow: '#ffff00' }
     }
 };
 
-const ZOOM = CONFIG.zoom;
-let GRAVITY = 0.53;
-const FRICTION = CONFIG.friction;
-let JUMP_FORCE_MULTIPLIER = 0.28;
-let MAX_JUMP_FORCE = 30;
-const TILT_SENSITIVITY = CONFIG.tiltSensitivity;
-const SUBSTEPS = CONFIG.substeps;
+// ==========================================
+// 2. CORE ENGINE & UTILITIES
+// ==========================================
 
-// Variables
-let peer;
-let conn;
-let isHost = false;
-let gameState = 'start';
-let score = 0;
-let cameraY = 0;
-let lastTime = 0;
-let worldWidth = 0;
-let worldHeight = 0;
-let frameCount = 0;
-let lastWindowWidth = 0;
-let lastWindowHeight = 0;
-let scoreDivisor = 10;
-
-// Player & World
-const player = {
-    x: 0,
-    y: 0,
-    radius: 12, // Slightly smaller relative to world
-    vx: 0,
-    vy: 0,
-    state: 'stuck',
-    color: '#00ff88'
-};
-
-// Ominous Tide (Chaser)
-const tide = {
-    y: 0,
-    speed: 0.1, // Base speed
-    waveOffset: 0,
-    color: '#ff0055'
-};
-
-let walls = [];
-let highestGenY = 0;
-let tiltVector = { x: 0, y: 0, magnitude: 0, angle: 0 };
-
-// --- INITIALIZATION ---
-function init() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const hostId = urlParams.get('host');
-
-    if (hostId) {
-        initController(hostId);
-    } else {
-        initHost();
-    }
-}
-
-// --- HOST LOGIC ---
-function initHost() {
-    isHost = true;
-    hostView.classList.remove('hidden');
-
-    // Bind Restart
-    restartBtn.addEventListener('click', resetGame);
-
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('debug')) {
-        console.log('Debug mode: visuals only');
-        connectionStatus.textContent = "Debug Mode";
-        setTimeout(() => {
-            connectionScreen.classList.add('hidden');
-            startGame();
-        }, 500);
-
-        resize();
-        // window.addEventListener('resize', resize); // Removed for manual check loop
-        requestAnimationFrame(gameLoop);
-        return;
+/**
+ * Manages Event interactions between components.
+ * Simple Pub/Sub pattern.
+ */
+class EventEmitter {
+    constructor() {
+        this.events = {};
     }
 
-    peer = new Peer();
+    /**
+     * Subscribe to an event.
+     * @param {string} event - Event name
+     * @param {Function} listener - Callback function
+     */
+    on(event, listener) {
+        if (!this.events[event]) this.events[event] = [];
+        this.events[event].push(listener);
+    }
 
-    peer.on('open', (id) => {
-        console.log('My peer ID is: ' + id);
-        const url = `${window.location.href.split('?')[0]}?host=${id}`;
-        new QRCode(qrcodeDiv, { text: url, width: 180, height: 180 });
-        connectionStatus.textContent = "Scan with phone to start";
-    });
-
-    peer.on('connection', (c) => {
-        conn = c;
-        connectionStatus.textContent = "Controller Connected!";
-        setTimeout(() => {
-            connectionScreen.style.opacity = 0;
-            setTimeout(() => connectionScreen.classList.add('hidden'), 500);
-            startGame();
-        }, 1000);
-        setupHostDataListener();
-    });
-
-    resize();
-    // window.addEventListener('resize', resize); // Removed for manual check loop
-    requestAnimationFrame(gameLoop);
-}
-
-function setupHostDataListener() {
-    conn.on('data', (data) => {
-        if (data.type === 'tilt') {
-            tiltVector = data.vector;
-        } else if (data.type === 'jump') {
-            jump();
+    /**
+     * Emit an event.
+     * @param {string} event - Event name
+     * @param {any} data - Data to pass to listeners
+     */
+    emit(event, data) {
+        if (this.events[event]) {
+            this.events[event].forEach(l => l(data));
         }
-    });
+    }
 }
 
-function resize() {
-    // Check if dimensions changed to avoid redundant calcs (though we only call this if changed in loop)
-    if (window.innerWidth === lastWindowWidth && window.innerHeight === lastWindowHeight) return;
-
-    lastWindowWidth = window.innerWidth;
-    lastWindowHeight = window.innerHeight;
-
-    // ===== SETUP CANVAS DIMENSIONS =====
-    // Background canvas for blur effect
-    const bgScale = 1.0;
-    bgCanvas.width = window.innerWidth * bgScale;
-    bgCanvas.height = window.innerHeight * bgScale;
-
-    // Target Aspect Ratio 9:16 (0.5625)
-    const targetAspect = 9 / 16;
-    const windowAspect = window.innerWidth / window.innerHeight;
-
-    let targetW, targetH;
-    if (windowAspect > targetAspect) {
-        // Window is wider (Desktop/Horizontal) -> Constrain Width by Height
-        targetH = window.innerHeight;
-        targetW = targetH * targetAspect;
-    } else {
-        // Window is taller (Some Phones/Vertical) -> Constrain Height by Width
-        targetW = window.innerWidth;
-        targetH = targetW / targetAspect;
+/**
+ * Handles WebRTC connections via PeerJS.
+ * Distinguishes between Host and Controller roles.
+ */
+class NetworkManager extends EventEmitter {
+    constructor() {
+        super();
+        this.peer = null;
+        this.conn = null;
+        this.isHost = false;
     }
 
-    // Capture old worldWidth for scaling entities
-    const oldWorldWidth = worldWidth;
+    /**
+     * Initialize as Host.
+     * Generates a QR code and listens for connections.
+     * @param {HTMLElement} qrElement - Element to render QR code into
+     * @param {HTMLElement} statusElement - Element to show status text
+     */
+    initHost(qrElement, statusElement) {
+        this.isHost = true;
+        this.peer = new Peer();
 
-    canvas.width = targetW;
-    canvas.height = targetH;
+        this.peer.on('open', (id) => {
+            console.log('Host Peer ID:', id);
+            const url = `${window.location.href.split('?')[0]}?host=${id}`;
+            new QRCode(qrElement, { text: url, width: 180, height: 180 });
+            statusElement.textContent = "Scan with phone to start";
+        });
 
-    // ===== CALCULATE NEW WORLD DIMENSIONS =====
-    worldWidth = canvas.width / ZOOM;
-    worldHeight = canvas.height / ZOOM;
+        this.peer.on('connection', (c) => {
+            this.conn = c;
+            statusElement.textContent = "Controller Connected!";
+            this.setupDataListener();
+            this.emit('connected');
 
-    // ===== SCALE ALL POSITION/SIZE VARIABLES =====
-    // If game is active and world previously existed, scale all game entities
-    if (gameState !== 'start' && oldWorldWidth > 0) {
-        const ratio = worldWidth / oldWorldWidth;
-
-        // Scale Player Position & Velocity
-        player.x *= ratio;
-        player.y *= ratio;
-        player.vx *= ratio;
-        player.vy *= ratio;
-
-        // Scale Tide Position
-        tide.y *= ratio;
-
-        // Scale Camera Position
-        cameraY *= ratio;
-
-        // Scale Wall Generation Tracker
-        highestGenY *= ratio;
-
-        // Scale Score Calculation
-        scoreDivisor *= ratio;
-
-        // Scale All Wall Positions & Dimensions
-        walls.forEach(w => {
-            w.x *= ratio;
-            w.y *= ratio;
-            w.w *= ratio;
-            w.h *= ratio;
+            // Wait a bit before fully starting to let UI transition
+            setTimeout(() => this.emit('readyToStart'), 1000);
         });
     }
 
-    // ===== UPDATE SIZE-DEPENDENT VARIABLES =====
-    // Variables that should always match current world dimensions
+    /**
+     * Initialize as Controller.
+     * Connects to the host ID found in URL.
+     * @param {string} hostId 
+     */
+    initController(hostId) {
+        this.isHost = false;
+        this.peer = new Peer();
 
-    // Player size (relative to world width)
-    player.radius = worldWidth * CONFIG.ratios.playerRadius;
+        this.peer.on('open', (id) => {
+            this.conn = this.peer.connect(hostId);
+            this.conn.on('open', () => {
+                console.log('Connected to Host');
+                this.emit('connected');
+            });
 
-    // Physics forces (scaled to world size for consistent feel)
-    GRAVITY = worldWidth * CONFIG.ratios.gravity;
-    MAX_JUMP_FORCE = worldWidth * CONFIG.ratios.maxJumpForce;
-    JUMP_FORCE_MULTIPLIER = worldWidth * CONFIG.ratios.jumpForceMult;
+            this.conn.on('data', (data) => {
+                this.emit('data', data); // Pass commands back to controller app (e.g. vibration)
+            });
+        });
+    }
 
-    // Tide speed (scaled to world size)
-    tide.speed = worldWidth * CONFIG.ratios.tideSpeed;
+    setupDataListener() {
+        if (!this.conn) return;
+        this.conn.on('data', (data) => {
+            if (data.type === 'tilt') this.emit('input_tilt', data.vector);
+            if (data.type === 'jump') this.emit('input_jump');
+        });
+    }
 
-    // ===== APPLY FIXED VISUAL EFFECTS =====
-    // These do NOT scale with world size
-    bgCtx.filter = 'none';
-    bgCanvas.style.filter = `blur(${CONFIG.blur}px) brightness(2.0) saturate(150%)`;
-
-    // ===== INITIALIZE GAME START STATE =====
-    if (gameState === 'start') {
-        // Set initial player position (center-bottom of world)
-        player.x = worldWidth / 2;
-        player.y = worldHeight - 150;
-
-        // Initialize tide position (below screen)
-        tide.y = worldHeight + 400;
-
-        // Reset camera to origin
-        cameraY = 0;
-
-        // Generate initial level
-        generateInitialWalls();
+    /**
+     * Send data to the connected peer.
+     * @param {object} data 
+     */
+    send(data) {
+        if (this.conn && this.conn.open) {
+            this.conn.send(data);
+        }
     }
 }
 
-function generateInitialWalls() {
-    walls = [];
-    // Floor
-    // Scale floor dimensions relative to worldWidth
-    const floorHeight = worldWidth * 0.15;
-    const floorY = worldHeight - worldWidth * 0.1;
+/**
+ * Normalizes input from various sources (Keyboard, Network).
+ * Acts as the source of truth for Player controls.
+ */
+class InputManager {
+    constructor(networkManager) {
+        this.tiltVector = { x: 0, y: 0, magnitude: 0, angle: 0 };
+        this.networkManager = networkManager;
+        this.setupNetworkListeners();
+    }
 
-    walls.push({ x: 0, y: floorY, w: worldWidth, h: floorHeight, type: 'floor' });
-    highestGenY = floorY;
+    setupNetworkListeners() {
+        this.networkManager.on('input_tilt', (v) => this.tiltVector = v);
+        this.networkManager.on('input_jump', () => this.triggerJump());
+    }
 
-    for (let i = 0; i < 15; i++) generateNextWall();
+    onJump(callback) {
+        this.jumpCallback = callback;
+    }
+
+    triggerJump() {
+        if (this.jumpCallback) this.jumpCallback();
+    }
+
+    /**
+     * Enable keyboard debugging controls (WASD/Arrows).
+     */
+    enableDebugKeys() {
+        console.log("Debug Keys Enabled");
+        const keyMap = {
+            'w': -Math.PI / 2, 'ArrowUp': -Math.PI / 2,
+            's': Math.PI / 2, 'x': Math.PI / 2, 'ArrowDown': Math.PI / 2,
+            'a': Math.PI, 'ArrowLeft': Math.PI,
+            'd': 0, 'ArrowRight': 0,
+            'q': -Math.PI * 0.75,
+            'e': -Math.PI * 0.25,
+            'c': Math.PI * 0.25,
+            'y': Math.PI * 0.75
+        };
+
+        window.addEventListener('keydown', (e) => {
+            if (e.repeat) return;
+            const key = e.key.toLowerCase(); // Check raw key for arrows
+            const code = e.code;
+
+            if (code === 'Space') {
+                this.triggerJump();
+                return;
+            }
+
+            // Check both k (char) and e.key (for Arrows)
+            const angle = keyMap[e.key] ?? keyMap[key];
+
+            if (angle !== undefined) {
+                this.tiltVector = {
+                    x: Math.cos(angle) * 100,
+                    y: Math.sin(angle) * 100,
+                    magnitude: 100,
+                    angle
+                };
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            // Simple release mechanism: if any direction key lift, stop (simplified)
+            if (['w', 'a', 's', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].some(k => e.key === k || e.key.toLowerCase() === k)) {
+                this.tiltVector.magnitude = 0;
+            }
+        });
+    }
 }
 
-function generateNextWall() {
-    // Determine user progression: calculate a random vertical gap between walls
-    const gapY = worldWidth * CONFIG.ratios.wallGapMin + Math.random() * worldWidth * CONFIG.ratios.wallGapRange;
+// ==========================================
+// 3. GAME ENTITIES
+// ==========================================
 
-    // Calculate the new wall's Y position relative to the highest generated wall so far
-    // Note: The coordinate system is inverted likely (y decreases as you go up), 
-    // so we subtract the gap from the highest generated Y
-    const y = highestGenY - gapY;
-
-    // Determine the type of wall using a random roll
-    const typeRoll = Math.random();
-    let type = 'normal';
-    if (typeRoll > 0.73) type = 'bouncy'; // % chance for a bouncy wall
-    if (typeRoll > 0.78) type = 'vertical'; // % chance for a vertical wall (overrides bouncy)
-
-    let w, h, x;
-
-    if (type === 'vertical') {
-        // Vertical walls are thin and tall
-        w = worldWidth * CONFIG.ratios.wallHeight; // Width is height ratio
-        h = worldWidth * 0.10 + Math.random() * worldWidth * 0.5;
-        x = Math.random() * (worldWidth - w);
-    } else {
-        // Horizontal walls
-        w = worldWidth * CONFIG.ratios.wallWidthMin + Math.random() * worldWidth * CONFIG.ratios.wallWidthRange;
-        h = worldWidth * CONFIG.ratios.wallHeight;
-        x = Math.random() * (worldWidth - w);
+/**
+ * Base Physics Object.
+ */
+class PhysicsEntity {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.vx = 0;
+        this.vy = 0;
     }
-
-    // Add the new wall to the walls array to be rendered and simulated
-    walls.push({ x, y, w, h, type });
-
-    // Update the tracker for the highest point where we've generated walls
-    highestGenY = y;
 }
 
-function jump() {
-    if (player.state !== 'stuck') return;
+/**
+ * The Slime Player.
+ * Handles physics, states (Air/Stuck), and collision response.
+ */
+class Player extends PhysicsEntity {
+    constructor(x, y, radius) {
+        super(x, y);
+        this.radius = radius;
+        this.state = 'stuck'; // 'stuck' | 'air' | 'sticky'
+        this.stickPoint = { x: 0, y: 0 }; // Anchor point for sticky state
+        this.impactSpeed = 0; // Stored impact speed for elastic effect
+        this.color = Config.Colors.PLAYER;
+    }
 
-    const force = Math.min(tiltVector.magnitude * JUMP_FORCE_MULTIPLIER, MAX_JUMP_FORCE);
-    const jumpAngle = tiltVector.angle + Math.PI;
+    resize(ratio) {
+        this.x *= ratio;
+        this.y *= ratio;
+        this.vx *= ratio;
+        this.vy *= ratio;
+        if (this.stickPoint) {
+            this.stickPoint.x *= ratio;
+            this.stickPoint.y *= ratio;
+        }
+        // Radius is updated separately via Game.resize logic usually, but we can do it here if passed
+    }
 
-    player.vx = Math.cos(jumpAngle) * force;
-    player.vy = Math.sin(jumpAngle) * force;
-    player.state = 'air';
+    updatePhysics(dt, gravity, friction) {
+        if (this.state === 'air') {
+            this.vy += gravity * dt;
+            this.vx *= Math.pow(friction, dt);
+        } else if (this.state === 'sticky') {
+            console.log("Updating Sticky Physics. y:", this.y.toFixed(2));
+            // Sticky Physics:
+            // 1. Gravity still applies but is countered by "glue" tension
+            // 2. We pretend there's a spring/damper connecting player to stickPoint
 
-    if (conn) conn.send({ type: 'vibrate', duration: Math.floor(force * 5) });
+            // Apply reduced gravity (slow ooze downwards)
+            // The speed depends on impactSpeed (higher impact -> oozes faster initially?)
+            // Actually user asked: "stretches slower the further it moves... and faster the higher the speed was"
+
+            // Let's model it as a highly viscous fluid
+            // v = v + g * dt
+            // v = v * drag
+
+            // Base Drag is high
+            let drag = Config.Ratios.STICKY_DRAG + (this.impactSpeed * 0.005); // More speed = less drag (faster ooze)?
+            // Clamp drag to be very slow
+            drag = Math.min(0.98, Math.max(0.85, drag));
+
+            // As we get further from stickPoint, drag increases (slows down)
+            const dist = Math.abs(this.y - this.stickPoint.y);
+            const tension = dist * 0.002;
+            drag -= tension; // Slow down as we stretch
+
+            this.vy += gravity * 0.1 * dt; // Very weak gravity effect (10%)
+            this.vy *= Math.pow(Math.max(0.5, drag), dt); // Heavy damping
+
+            this.vx *= 0.8; // Kill horizontal momentum quickly
+        }
+    }
+
+    jump(angle, forceMagnitude, maxForce, forceMult) {
+        if (this.state !== 'stuck' && this.state !== 'sticky') return false;
+
+        const force = Math.min(forceMagnitude * forceMult, maxForce);
+        const jumpAngle = angle + Math.PI; // Jump opposite to tilt
+
+        this.vx = Math.cos(jumpAngle) * force;
+        this.vy = Math.sin(jumpAngle) * force;
+        this.state = 'air';
+        return true; // Jump successful
+    }
+
+    /**
+     * Resolves collision with the world bounds.
+     * @param {number} width - World width
+     */
+    checkBounds(width) {
+        if (this.x - this.radius < 0) {
+            this.x = this.radius;
+            this.vx *= -0.7;
+        } else if (this.x + this.radius > width) {
+            this.x = width - this.radius;
+            this.vx *= -0.7;
+        }
+    }
 }
 
-function update(dt) {
-    if (gameState !== 'playing') return;
-
-    // Update Tide
-    // Catch Up Mechanic: If player is far ahead, speed up the tide
-    let currentSpeed = tide.speed;
-    const distToTide = tide.y - player.y;
-    // If player is more than 1.5 screens ahead
-    const catchUpThreshold = worldHeight * 0.0;
-
-    if (distToTide > catchUpThreshold) {
-        // Boost speed proportional to distance
-        currentSpeed += (distToTide - catchUpThreshold) * CONFIG.ratios.tideCatchup;
+/**
+ * Represents a single Wall/Platform.
+ */
+class Wall {
+    constructor(x, y, w, h, type = 'normal') {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+        this.type = type;
     }
 
-    tide.y -= currentSpeed;
-    tide.waveOffset += 0.1;
+    /**
+     * Checks collision with a circle (Player).
+     * @param {Player} p 
+     * @returns {object|null} Collision data (dist, nx, ny) or null
+     */
+    checkCollision(p) {
+        const closestX = Math.max(this.x, Math.min(p.x, this.x + this.w));
+        const closestY = Math.max(this.y, Math.min(p.y, this.y + this.h));
 
-    // Visual Danger Indicator: Border Color
-    // Canvas Border reacts to tide proximity
-    // Distance from bottom of camera (screen bottom) to tide
-    const screenBottomY = cameraY + worldHeight;
-    const proximity = tide.y - screenBottomY; // Negative if tide is on screen, positive if below
+        const dx = p.x - closestX;
+        const dy = p.y - closestY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
 
-    // Warning starts when tide is within 300px of the screen bottom or ON screen
-    const dangerZone = 300;
-
-    // We want a value from 0 (safe) to 1 (danger/dead)
-    // If proximity > 300 (safe) -> 0
-    // If proximity < -worldHeight (dead/player covered) -> 1
-    // Actually simpler: just based on visual presence.
-    // If tide is ON SCREEN (proximity < 0), it gets redder.
-
-    if (proximity < dangerZone) {
-        // Map [300, -200] to [0, 1] opacity of red
-        // 300 -> 0 (White/Norm)
-        // 0 -> 0.6 (Red)
-        // -200 -> 1.0 (Deep Red)
-
-        let intensity = 1 - ((proximity + 200) / (dangerZone + 200));
-        intensity = Math.max(0, Math.min(1, intensity));
-
-        // Base border is rgba(255, 255, 255, 0.3)
-        // Danger is rgba(255, 0, 0, 0.8)
-
-        const r = Math.floor(255);
-        const g = Math.floor(255 * (1 - intensity));
-        const b = Math.floor(255 * (1 - intensity));
-        const a = 0.3 + (intensity * 0.5);
-
-        canvas.style.borderColor = `rgba(${r}, ${g}, ${b}, ${a})`;
-        canvas.style.boxShadow = `0 0 ${50 + intensity * 50}px rgba(${r}, 0, 0, ${0.9 * intensity})`;
-    } else {
-        canvas.style.borderColor = 'rgba(255, 255, 255, 0.3)';
-        canvas.style.boxShadow = '0 0 50px rgba(0, 0, 0, 0.9)';
+        if (dist < p.radius) {
+            return { dist, dx, dy };
+        }
+        return null;
     }
 
-    // Tide Collision
-    // If player touches the tide (plus a bit of leeway for the wave peaks)
-    if (player.y + player.radius > tide.y + 20) {
-        gameOver();
+    resolve(p, colData) {
+        // 1. Depenetrate
+        const overlap = p.radius - colData.dist;
+        let nx, ny;
+        if (colData.dist === 0) {
+            nx = 0; ny = -1;
+        } else {
+            nx = colData.dx / colData.dist;
+            ny = colData.dy / colData.dist;
+        }
+
+        // DEBUG LOGGING
+        console.log(`Collision: nx=${nx.toFixed(2)}, ny=${ny.toFixed(2)}, type=${this.type}`);
+
+        p.x += nx * overlap;
+        p.y += ny * overlap;
+
+        // 2. Reaction
+        if (this.type === 'bouncy') {
+            // Reflect: v - 2(v.n)n
+            const dot = p.vx * nx + p.vy * ny;
+            p.vx = p.vx - 2 * dot * nx;
+            p.vy = p.vy - 2 * dot * ny;
+            p.vx *= 1.1; // Energy gain
+            p.vy *= 1.1;
+            return false; // Did not stick
+        } else {
+            // Stick
+            // Check for ceiling collision (ny > 0.5 means normal points DOWN, so we hit from BELOW)
+            if (ny > 0.5 && this.type === 'normal') {
+                console.log("Sticky Triggered! ny:", ny);
+                // Underside Collision -> Sticky Mode
+                p.state = 'sticky';
+                p.stickPoint = { x: p.x, y: this.y + this.h }; // Anchor at bottom of wall
+
+                // Calculate impact speed for visual/physics effects
+                p.impactSpeed = Math.abs(p.vy);
+
+                // Kill velocity immediately to start the "stretch" from 0
+                p.vx = 0;
+                p.vy = 0;
+            } else {
+                // Top/Side Collision -> Normal Stick
+                p.state = 'stuck';
+                p.vx = 0;
+                p.vy = 0;
+            }
+            return true; // Stuck
+        }
+    }
+}
+
+/**
+ * The Rising Tide (Game Over Mechanic).
+ */
+class Tide {
+    constructor(y) {
+        this.y = y;
+        this.speed = 0;
+        this.waveOffset = 0;
+        this.color = Config.Colors.TIDE_BASE;
     }
 
-    // Physics Sub-stepping
-    if (player.state === 'air') {
-        const stepDt = 1 / SUBSTEPS; // Normalized step
+    update(dt, playerY, worldWidth, worldHeight) {
+        // Catch-up Mechanic
+        const distToTide = this.y - playerY;
+        const catchUpThreshold = worldHeight * 0.5;
 
-        // Apply Gravity once per frame
-        player.vy += GRAVITY;
-        player.vx *= FRICTION;
+        let currentSpeed = this.speed;
 
-        for (let i = 0; i < SUBSTEPS; i++) {
-            player.x += player.vx * stepDt;
-            player.y += player.vy * stepDt;
+        if (distToTide > catchUpThreshold) {
+            currentSpeed += (distToTide - catchUpThreshold) * Config.Ratios.TIDE_CATCHUP;
+        }
+
+        this.y -= currentSpeed * dt;
+        this.waveOffset += 0.1 * dt;
+    }
+}
+
+/**
+ * Handles Game Camera (Vertical Scrolling).
+ */
+class Camera {
+    constructor() {
+        this.y = 0;
+        this.smoothness = 0.1;
+    }
+
+    update(targetY, dt, limitY) {
+        const lerpFactor = 1 - Math.pow(1 - this.smoothness, dt);
+        this.y += (targetY - this.y) * lerpFactor;
+
+        // Clamp to prevent looking into void below tide
+        if (this.y > limitY) this.y = limitY;
+    }
+}
+
+/**
+ * Procedural Generator for Levels.
+ */
+class LevelGenerator {
+    constructor() {
+        this.highestY = 0;
+    }
+
+    reset(startY) {
+        this.highestY = startY;
+    }
+
+    generateNext(worldWidth) {
+        const gap = worldWidth * Config.Ratios.WALL_GAP_MIN + Math.random() * worldWidth * Config.Ratios.WALL_GAP_RANGE;
+        const y = this.highestY - gap;
+
+        // Roll Type
+        const roll = Math.random();
+        let type = 'normal';
+        if (roll > 0.73) type = 'bouncy';
+        if (roll > 0.78) type = 'vertical';
+
+        let w, h, x;
+
+        if (type === 'vertical') {
+            w = worldWidth * Config.Ratios.WALL_HEIGHT;
+            h = worldWidth * 0.10 + Math.random() * worldWidth * 0.5;
+            x = Math.random() * (worldWidth - w);
+        } else {
+            w = worldWidth * Config.Ratios.WALL_WIDTH_MIN + Math.random() * worldWidth * Config.Ratios.WALL_WIDTH_RANGE;
+            h = worldWidth * Config.Ratios.WALL_HEIGHT;
+            x = Math.random() * (worldWidth - w);
+        }
+
+        this.highestY = y;
+        return new Wall(x, y, w, h, type);
+    }
+}
+
+// ==========================================
+// 4. VISUALS & RENDERING
+// ==========================================
+
+class Renderer {
+    constructor(canvas, bgCanvas) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext('2d', { alpha: false });
+        this.bgCanvas = bgCanvas;
+        this.bgCtx = bgCanvas.getContext('2d', { alpha: false });
+
+        // Setup static BG effects
+        this.bgCtx.filter = Config.Visual.BG_BLUR;
+        this.bgCanvas.style.filter = 'none'; // Clear CSS filter
+    }
+
+    clear() {
+        this.ctx.fillStyle = '#0a0a12';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        if (this.bgCanvas.width > 0) {
+            this.bgCtx.clearRect(0, 0, this.bgCanvas.width, this.bgCanvas.height);
+        }
+    }
+
+    /**
+     * Main Draw Call
+     * @param {Game} game - Game state
+     */
+    draw(game) {
+        this.clear();
+
+        // 1. Draw Game World
+        this.drawWorld(this.ctx, game, false);
+
+        // 2. Draw Background Mirror (Optimized)
+        if (this.bgCanvas.width > 0) {
+            this.bgCtx.save();
+            const scale = Math.max(
+                this.bgCanvas.width / this.canvas.width,
+                this.bgCanvas.height / this.canvas.height
+            );
+            const offsetX = (this.bgCanvas.width - (this.canvas.width * scale)) / 2;
+            const offsetY = (this.bgCanvas.height - (this.canvas.height * scale)) / 2;
+
+            this.bgCtx.translate(offsetX, offsetY);
+            this.bgCtx.scale(scale, scale);
+
+            this.drawWorld(this.bgCtx, game, true);
+            this.bgCtx.restore();
+        }
+
+        // 3. Update Visual Danger Indicator (Dom separation - strictly UI)
+        this.updateDangerUI(game);
+    }
+
+    drawWorld(ctx, game, isBackground) {
+        ctx.save();
+        ctx.scale(Config.Visual.ZOOM, Config.Visual.ZOOM);
+        ctx.translate(0, -game.camera.y);
+
+        // Draw Walls
+        this.drawWalls(ctx, game.walls, isBackground);
+
+        // Draw Player
+        this.drawPlayer(ctx, game.player, isBackground);
+
+        // Draw Aim Line
+        if (game.player.state === 'stuck' || game.player.state === 'sticky') {
+            this.drawAim(ctx, game.player, game.input.tiltVector, game.worldWidth);
+        }
+
+        // Draw Glue (Sticky State)
+        if (game.player.state === 'sticky') {
+            this.drawGlue(ctx, game.player);
+        }
+
+        // Draw Tide
+        this.drawTide(ctx, game.tide, game.worldWidth, isBackground);
+
+        ctx.restore();
+    }
+
+    drawWalls(ctx, walls, isBackground) {
+        // Optimized Batch Rendering logic
+        const types = ['normal', 'bouncy', 'vertical'];
+        const configs = {
+            'normal': Config.Colors.WALL_NORMAL,
+            'bouncy': Config.Colors.WALL_BOUNCY,
+            'vertical': Config.Colors.WALL_VERTICAL
+        };
+
+        types.forEach(type => {
+            const batch = walls.filter(w => w.type === type);
+            if (batch.length === 0) return;
+
+            const conf = configs[type];
+
+            if (isBackground) {
+                // Fake Glow approach for speed
+                ctx.save();
+                ctx.beginPath();
+                batch.forEach(w => ctx.roundRect(Math.round(w.x), Math.round(w.y), Math.round(w.w), Math.round(w.h), 5));
+                ctx.strokeStyle = conf.shadow;
+                ctx.lineWidth = 12;
+                ctx.globalAlpha = 0.3;
+                ctx.stroke();
+                ctx.restore();
+
+                ctx.beginPath();
+                batch.forEach(w => ctx.roundRect(Math.round(w.x), Math.round(w.y), Math.round(w.w), Math.round(w.h), 5));
+                ctx.fillStyle = conf.fill;
+                ctx.strokeStyle = conf.stroke;
+                ctx.lineWidth = 2;
+                ctx.fill();
+                ctx.stroke();
+            } else {
+                ctx.fillStyle = conf.fill;
+                ctx.strokeStyle = conf.stroke;
+                ctx.shadowColor = conf.shadow;
+                ctx.shadowBlur = 10;
+                ctx.lineWidth = 2;
+
+                ctx.beginPath();
+                batch.forEach(w => ctx.roundRect(Math.round(w.x), Math.round(w.y), Math.round(w.w), Math.round(w.h), 5));
+                ctx.fill();
+                ctx.stroke();
+            }
+        });
+    }
+
+    drawPlayer(ctx, p, isBackground) {
+        if (!isBackground) {
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = p.color;
+        }
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(Math.round(p.x), Math.round(p.y), p.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+    }
+
+    drawGlue(ctx, p) {
+        const startX = p.stickPoint.x;
+        const startY = p.stickPoint.y;
+
+        ctx.save();
+        ctx.beginPath();
+
+        // Draw a blobby connection
+        // Move to wall anchor
+        ctx.moveTo(startX - 10, startY);
+
+        // Curve down to player left side
+        ctx.quadraticCurveTo(startX, p.y - p.radius, p.x - p.radius * 0.5, p.y - p.radius * 0.8);
+
+        // Across player top (implied by ball body, but let's connect)
+        ctx.lineTo(p.x + p.radius * 0.5, p.y - p.radius * 0.8);
+
+        // Curve up to wall anchor right
+        ctx.quadraticCurveTo(startX, p.y - p.radius, startX + 10, startY);
+
+        ctx.closePath();
+
+        ctx.fillStyle = Config.Colors.PLAYER;
+        ctx.globalAlpha = 0.8;
+        ctx.fill();
+
+        // Glue Strands (Details)
+        const dist = Math.abs(p.y - startY);
+        if (dist > 10) {
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            ctx.lineTo(p.x, p.y - p.radius);
+            ctx.strokeStyle = '#ccffdd';
+            ctx.lineWidth = Math.max(0.5, 4 - dist * 0.05); // Thinner as it stretches
+            ctx.stroke();
+        }
+
+        ctx.restore();
+    }
+
+    drawAim(ctx, p, tilt, worldWidth) {
+        const jumpAngle = tilt.angle + Math.PI;
+        const maxLineLen = worldWidth * Config.Ratios.INDICATOR_LENGTH;
+        const lineLen = (tilt.magnitude / 100) * maxLineLen;
+
+        ctx.beginPath();
+        ctx.moveTo(Math.round(p.x), Math.round(p.y));
+        ctx.lineTo(Math.round(p.x + Math.cos(jumpAngle) * lineLen), Math.round(p.y + Math.sin(jumpAngle) * lineLen));
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+        ctx.lineWidth = Math.max(1, worldWidth * 0.003);
+        ctx.setLineDash([worldWidth * 0.01, worldWidth * 0.01]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+    }
+
+    drawTide(ctx, tide, width, isBackground) {
+        const tideY = tide.y;
+
+        ctx.fillStyle = tide.color;
+        ctx.beginPath();
+        ctx.moveTo(0, tideY + 1000);
+        ctx.lineTo(0, tideY);
+
+        const waveRes = width * 0.02;
+        const waveAmp = width * Config.Ratios.TIDE_WAVE_AMP;
+        const spikeHeight = width * Config.Ratios.TIDE_GLITCH_SPIKE;
+
+        for (let x = 0; x <= width; x += waveRes) {
+            let yOffset = Math.sin(x * 0.05 + tide.waveOffset) * waveAmp;
+            if (Math.random() > 0.98) yOffset -= Math.random() * spikeHeight;
+            ctx.lineTo(x, tideY + yOffset);
+        }
+
+        ctx.lineTo(width, tideY + 1000);
+        ctx.closePath();
+
+        const tideGrad = ctx.createLinearGradient(0, tideY, 0, tideY + 500);
+        tideGrad.addColorStop(0, 'rgba(255, 0, 85, 0.6)');
+        tideGrad.addColorStop(0.2, 'rgba(50, 0, 20, 0.9)');
+        tideGrad.addColorStop(1, 'rgba(0, 0, 0, 1)');
+        ctx.fillStyle = tideGrad;
+        ctx.fill();
+
+        // Top Edge Glow
+        if (!isBackground) {
+            ctx.shadowBlur = Math.min(width * 0.02, 50);
+            ctx.shadowColor = Config.Colors.TIDE_SHADOW;
+            ctx.strokeStyle = Config.Colors.TIDE_STROKE;
+            ctx.lineWidth = width * Config.Ratios.TIDE_LINE_WIDTH;
+            ctx.stroke();
+            ctx.shadowBlur = 0; // Reset
+        } else {
+            // Fake Glow Background
+            ctx.save();
+            ctx.strokeStyle = Config.Colors.TIDE_SHADOW;
+            ctx.lineWidth = width * Config.Ratios.TIDE_LINE_WIDTH * 6;
+            ctx.globalAlpha = 0.4;
+            ctx.stroke();
+            ctx.restore();
+
+            ctx.strokeStyle = Config.Colors.TIDE_STROKE;
+            ctx.lineWidth = width * Config.Ratios.TIDE_LINE_WIDTH;
+            ctx.stroke();
+        }
+    }
+
+    updateDangerUI(game) {
+        const screenBottomY = game.camera.y + game.worldHeight;
+        const proximity = game.tide.y - screenBottomY;
+        const dangerZone = 300;
+
+        if (proximity < dangerZone) {
+            let intensity = 1 - ((proximity + 200) / (dangerZone + 200));
+            intensity = Math.max(0, Math.min(1, intensity));
+
+            const r = 255;
+            const g = Math.floor(255 * (1 - intensity));
+            const b = Math.floor(255 * (1 - intensity));
+            const a = 0.3 + (intensity * 0.5);
+
+            this.canvas.style.borderColor = `rgba(${r}, ${g}, ${b}, ${a})`;
+            this.canvas.style.boxShadow = `0 0 ${50 + intensity * 50}px rgba(${r}, 0, 0, ${0.9 * intensity})`;
+        } else {
+            this.canvas.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+            this.canvas.style.boxShadow = '0 0 50px rgba(0, 0, 0, 0.9)';
+        }
+    }
+}
+
+// ==========================================
+// 5. MAIN GAME LOGIC
+// ==========================================
+
+class Game {
+    constructor() {
+        // UI Elements
+        this.scoreEl = document.getElementById('score-value');
+        this.finalScoreEl = document.getElementById('final-score');
+        this.gameOverScreen = document.getElementById('game-over-screen');
+
+        // System
+        this.renderer = new Renderer(
+            document.getElementById('gameCanvas'),
+            document.getElementById('bg-canvas')
+        );
+        this.net = new NetworkManager();
+        this.input = new InputManager(this.net);
+        this.levelGen = new LevelGenerator();
+
+        // State
+        this.state = 'start'; // start | playing | gameover
+        this.score = 0;
+        this.lastTime = 0;
+        this.frameCount = 0;
+
+        // Dimensions
+        this.worldWidth = 0;
+        this.worldHeight = 0;
+        this.lastWinW = 0;
+        this.lastWinH = 0;
+
+        // Entities
+        this.player = new Player(0, 0);
+        this.tide = new Tide(0);
+        this.camera = new Camera();
+        this.walls = [];
+        this.scoreDivisor = 10;
+
+        this.bindEvents();
+    }
+
+    bindEvents() {
+        // Restart Button
+        document.getElementById('restart-btn').addEventListener('click', () => this.resetGame());
+
+        // Net Events
+        this.net.on('readyToStart', () => {
+            document.getElementById('connection-screen').classList.add('hidden');
+            this.startGame();
+        });
+
+        // Input Jump
+        this.input.onJump(() => {
+            const jumped = this.player.jump(
+                this.input.tiltVector.angle,
+                this.input.tiltVector.magnitude,
+                this.maxJumpForce,
+                this.jumpForceMult
+            );
+
+            if (jumped && this.net.conn) {
+                this.net.send({ type: 'vibrate', duration: Math.floor(this.input.tiltVector.magnitude * 0.5) });
+            }
+        });
+    }
+
+    /**
+     * Entry Point
+     */
+    init() {
+        const urlParams = new URLSearchParams(window.location.search);
+
+        // Debug Mode
+        if (urlParams.get('debug')) {
+            console.log("Starting in Debug Mode");
+            document.getElementById('host-view').classList.remove('hidden'); // Show Game
+            document.getElementById('connection-status').textContent = "Debug Mode";
+            setTimeout(() => {
+                document.getElementById('connection-screen').classList.add('hidden');
+                this.startGame();
+            }, 500);
+            this.input.enableDebugKeys();
+        } else if (urlParams.get('host')) {
+            // Controller Mode
+            new ControllerApp(urlParams.get('host'));
+            return; // Stop Game Logic here for Controller
+        } else {
+            // Host Mode
+            this.net.initHost(
+                document.getElementById('qrcode'),
+                document.getElementById('connection-status')
+            );
+            document.getElementById('host-view').classList.remove('hidden');
+        }
+
+        // Start Loop
+        this.resize();
+        requestAnimationFrame((t) => this.loop(t));
+    }
+
+    startGame() {
+        this.state = 'playing';
+        this.resetEntities();
+    }
+
+    resetGame() {
+        this.gameOverScreen.classList.add('hidden');
+        this.score = 0;
+        this.scoreEl.textContent = '0m';
+        this.state = 'playing';
+        this.resize(); // Force size check
+        this.resetEntities();
+    }
+
+    resetEntities() {
+        // Center player
+        this.player.x = this.worldWidth / 2;
+        this.player.y = this.worldHeight - 150;
+        this.player.vx = 0;
+        this.player.vy = 0;
+        this.player.state = 'air';
+
+        this.tide.y = this.worldHeight * (1 + Config.Ratios.TIDE_START_OFFSET);
+        this.camera.y = 0;
+
+        // Gen Floor & Walls
+        const floorHeight = this.worldWidth * 0.15;
+        const floorY = this.worldHeight - this.worldWidth * 0.1;
+
+        this.walls = [new Wall(0, floorY, this.worldWidth, floorHeight, 'normal')];
+        this.levelGen.reset(floorY);
+
+        for (let i = 0; i < 15; i++) {
+            this.walls.push(this.levelGen.generateNext(this.worldWidth));
+        }
+    }
+
+    resize() {
+        if (window.innerWidth === this.lastWinW && window.innerHeight === this.lastWinH) return;
+
+        this.lastWinW = window.innerWidth;
+        this.lastWinH = window.innerHeight;
+
+        // 1. Calculate Canvas Dimensions 
+        const targetAspect = 13 / 16;
+        const winAspect = window.innerWidth / window.innerHeight;
+        let w, h;
+
+        if (winAspect > targetAspect) {
+            h = window.innerHeight;
+            w = h * targetAspect;
+        } else {
+            w = window.innerWidth;
+            h = w / targetAspect;
+        }
+
+        const oldWorldW = this.worldWidth;
+
+        this.renderer.canvas.width = w;
+        this.renderer.canvas.height = h;
+
+        // Low Res BG
+        this.renderer.bgCanvas.width = window.innerWidth * Config.Visual.BG_SCALE_RES;
+        this.renderer.bgCanvas.height = window.innerHeight * Config.Visual.BG_SCALE_RES;
+        // Restore Blur Context State after resize
+        this.renderer.bgCtx.filter = Config.Visual.BG_BLUR;
+
+        // 2. World Dimensions
+        this.worldWidth = w / Config.Visual.ZOOM;
+        this.worldHeight = h / Config.Visual.ZOOM;
+
+        // 3. Scale Entities if recovering from previous state
+        if (this.state !== 'start' && oldWorldW > 0) {
+            const ratio = this.worldWidth / oldWorldW;
+            this.player.resize(ratio);
+            this.tide.y *= ratio;
+            this.camera.y *= ratio;
+            this.levelGen.highestY *= ratio;
+            this.scoreDivisor *= ratio;
+            this.walls.forEach(w => {
+                w.x *= ratio; w.y *= ratio; w.w *= ratio; w.h *= ratio;
+            });
+        }
+
+        // 4. Update Size-Dependent Constants
+        this.player.radius = this.worldWidth * Config.Ratios.PLAYER_RADIUS;
+        this.gravity = this.worldWidth * Config.Ratios.GRAVITY;
+        this.maxJumpForce = this.worldWidth * Config.Ratios.MAX_JUMP_FORCE;
+        this.jumpForceMult = this.worldWidth * Config.Ratios.JUMP_FORCE_MULT;
+        this.tide.speed = this.worldWidth * Config.Ratios.TIDE_SPEED;
+
+        if (this.state === 'start') this.resetEntities();
+    }
+
+    loop(timestamp) {
+        this.resize(); // Check resize every frame
+
+        if (!this.lastTime) this.lastTime = timestamp;
+        let dt = timestamp - this.lastTime;
+        if (dt > 100) dt = 100; // Cap dt for pausing/tab switching
+        this.lastTime = timestamp;
+
+        const timeScale = dt / (1000 / 60);
+
+        this.update(timeScale);
+        this.renderer.draw(this);
+
+        requestAnimationFrame((t) => this.loop(t));
+    }
+
+    update(timeScale) {
+        if (this.state !== 'playing') return;
+
+        // Update Tide
+        this.tide.update(timeScale, this.player.y, this.worldWidth, this.worldHeight);
+
+        // Check Tide Death
+        if (this.player.y + this.player.radius > this.tide.y + this.worldWidth * Config.Ratios.TIDE_COLLISION_THRESHOLD) {
+            this.gameOver();
+        }
+
+        // Physics
+        this.updatePhysics(timeScale);
+
+        // Camera
+        const targetCamY = this.player.y - this.worldHeight * 0.6;
+        const maxCamY = this.tide.y - this.worldHeight + this.worldHeight * Config.Ratios.CAMERA_LIMIT_PADDING;
+        this.camera.update(targetCamY, timeScale, maxCamY);
+
+        // Score
+        const h = Math.floor(-this.player.y / this.scoreDivisor);
+        if (h > this.score) {
+            this.score = h;
+            this.scoreEl.textContent = this.score + 'm';
+        }
+
+        // Level Gen
+        if (this.camera.y < this.levelGen.highestY + this.worldHeight * Config.Ratios.GEN_TRIGGER_DIST) {
+            this.walls.push(this.levelGen.generateNext(this.worldWidth));
+        }
+        // Cleanup walls below camera
+        this.walls = this.walls.filter(w => w.y < this.camera.y + this.worldHeight + this.worldHeight * Config.Ratios.CLEANUP_DIST);
+    }
+
+    updatePhysics(timeScale) {
+        if (this.player.state !== 'air' && this.player.state !== 'sticky') return;
+
+        const subStepDt = (1 / Config.Visual.SUBSTEPS) * timeScale;
+
+        // Apply forces
+        this.player.updatePhysics(timeScale, this.gravity, Config.Visual.FRICTION);
+
+        // Substeps for collision accuracy
+        for (let i = 0; i < Config.Visual.SUBSTEPS; i++) {
+            this.player.x += this.player.vx * subStepDt;
+            this.player.y += this.player.vy * subStepDt;
 
             // Wall Collisions
-            if (checkCollisions()) break; // If stuck, stop stepping
-
-            // World Boundaries
-            if (player.x - player.radius < 0) {
-                player.x = player.radius;
-                player.vx *= -0.8;
-            } else if (player.x + player.radius > worldWidth) {
-                player.x = worldWidth - player.radius;
-                player.vx *= -0.8;
+            let collided = false;
+            for (let w of this.walls) {
+                const col = w.checkCollision(this.player);
+                if (col) {
+                    if (w.resolve(this.player, col)) {
+                        collided = true; // Stuck
+                        break;
+                    }
+                }
             }
+            if (collided) break;
+
+            this.player.checkBounds(this.worldWidth);
         }
 
-        // Game Over - as soon as the top of the ball leaves the visual area
-        if (player.y - player.radius > cameraY + worldHeight) gameOver();
-    }
-
-    // Camera
-    // --- CAMERA LOGIC ---
-    // The camera follows the player as they climb up.
-    // We target a position slightly below the player's current Y (worldHeight * 0.6 offset)
-    const targetY = player.y - worldHeight * 0.6;
-
-    // Smoothly interpolate the camera's current Y position towards the target Y.
-    const smoothness = 0.1;
-    cameraY += (targetY - cameraY) * smoothness;
-
-    // Clamp the camera so it doesn't go indefinitely down into the void
-    // The "buffer" here ensures we don't look too far past the tide
-    // tide.y is the top of the tide. We want the camera bottom (cameraY + worldHeight) to be near tide.y
-    const maxCameraY = tide.y - worldHeight + 100; // Allow seeing 100px into the tide
-    if (cameraY > maxCameraY) cameraY = maxCameraY;
-
-    // Score
-    const currentHeight = Math.floor(-player.y / scoreDivisor);
-    if (currentHeight > score) {
-        score = currentHeight;
-        scoreValue.textContent = score + 'm';
-    }
-
-    // Gen & Cleanup
-    if (cameraY < highestGenY + 1000) generateNextWall();
-    walls = walls.filter(w => w.y < cameraY + worldHeight + 200);
-}
-
-function checkCollisions() {
-    for (let w of walls) {
-        // AABB vs Circle
-        let closestX = Math.max(w.x, Math.min(player.x, w.x + w.w));
-        let closestY = Math.max(w.y, Math.min(player.y, w.y + w.h));
-
-        let dx = player.x - closestX;
-        let dy = player.y - closestY;
-        let dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist < player.radius) {
-            // Collision!
-
-            // 1. Depenetrate (Push out)
-            const overlap = player.radius - dist;
-            let nx, ny;
-
-            if (dist === 0) {
-                // Center inside wall, push up
-                nx = 0; ny = -1;
-            } else {
-                nx = dx / dist;
-                ny = dy / dist;
-            }
-
-            player.x += nx * overlap;
-            player.y += ny * overlap;
-
-            // 2. Handle Reaction
-            if (w.type === 'bouncy') {
-                // Reflect velocity: V_new = V_old - 2(V_old . N) * N
-                const dot = player.vx * nx + player.vy * ny;
-                player.vx = player.vx - 2 * dot * nx;
-                player.vy = player.vy - 2 * dot * ny;
-
-                // Add some energy loss or gain?
-                player.vx *= 1.1; // Super bounce!
-                player.vy *= 1.1;
-
-                // Play sound or effect?
-                return false; // Keep moving in this frame (don't stop)
-            } else {
-                // Stick
-                player.state = 'stuck';
-                player.vx = 0;
-                player.vy = 0;
-                return true; // Stop physics steps
-            }
+        // Fall Death (Off bottom of screen relative to camera)
+        // Actually, Tide is the killer, but if they fall excessively fast past camera? 
+        // Logic kept from original:
+        if (this.player.y - this.player.radius > this.camera.y + this.worldHeight) {
+            this.gameOver();
         }
     }
-    return false;
-}
 
-function gameOver() {
-    gameState = 'gameover';
-    finalScoreEl.textContent = score + 'm';
-    gameOverScreen.classList.remove('hidden');
-}
-
-function resetGame() {
-    gameOverScreen.classList.add('hidden');
-    gameState = 'start';
-    score = 0;
-    scoreValue.textContent = '0m';
-    resize();
-    // Reset Score Divisor anchor? 
-    // Since resize updates it based on ratio, and we might have drifted if floating point errors accum?
-    // Probably fine. But to be safe, could normalize.
-    // However, since we are in start state, resize() won't scale.
-    // So we reset scoreDivisor to 10 * adjustment?
-    // If the window is huge, we WANT a large divisor.
-    // But resize() didn't change it because oldWorldWidth=worldWidth effectively if we call resize again?
-    // Wait, resize() sets oldWorldWidth = worldWidth.
-    // ratio = 1.
-    // So scoreDivisor stays whatever it was.
-    // If we've resized 10 times, scoreDivisor is correct for current width.
-    // So we DON'T reset it to 10. We keep as is.
-    gameState = 'playing';
-}
-
-function renderWorld(targetCtx) {
-    targetCtx.save();
-    targetCtx.scale(ZOOM, ZOOM); // Apply Zoom
-    targetCtx.translate(0, -cameraY);
-
-    // Draw Walls
-    for (let w of walls) {
-        targetCtx.beginPath();
-        targetCtx.roundRect(w.x, w.y, w.w, w.h, 5);
-
-        if (w.type === 'bouncy') {
-            targetCtx.fillStyle = CONFIG.colors.wallBouncy.fill;
-            targetCtx.strokeStyle = CONFIG.colors.wallBouncy.stroke;
-            targetCtx.shadowColor = CONFIG.colors.wallBouncy.shadow;
-        } else if (w.type === 'vertical') {
-            targetCtx.fillStyle = CONFIG.colors.wallVertical.fill;
-            targetCtx.strokeStyle = CONFIG.colors.wallVertical.stroke;
-            targetCtx.shadowColor = CONFIG.colors.wallVertical.shadow;
-        } else {
-            targetCtx.fillStyle = CONFIG.colors.wallNormal.fill;
-            targetCtx.strokeStyle = CONFIG.colors.wallNormal.stroke;
-            targetCtx.shadowColor = CONFIG.colors.wallNormal.shadow;
-        }
-
-        targetCtx.shadowBlur = 10;
-        targetCtx.lineWidth = 2;
-        targetCtx.fill();
-        targetCtx.stroke();
-    }
-
-    // Draw Player
-    targetCtx.shadowBlur = 20;
-    targetCtx.shadowColor = player.color;
-    targetCtx.fillStyle = player.color;
-    targetCtx.beginPath();
-    targetCtx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
-    targetCtx.fill();
-
-    // Aim Line
-    if (player.state === 'stuck') {
-        const jumpAngle = tiltVector.angle + Math.PI;
-        const lineLen = tiltVector.magnitude * 3;
-
-        targetCtx.beginPath();
-        targetCtx.moveTo(player.x, player.y);
-        targetCtx.lineTo(player.x + Math.cos(jumpAngle) * lineLen, player.y + Math.sin(jumpAngle) * lineLen);
-        targetCtx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-        targetCtx.lineWidth = 2;
-        targetCtx.setLineDash([10, 10]);
-        targetCtx.stroke();
-        targetCtx.setLineDash([]);
-    }
-
-    // Draw Tide (The Neon Void)
-    targetCtx.fillStyle = tide.color;
-    // Create a glitchy/wavy top
-    targetCtx.beginPath();
-    targetCtx.moveTo(0, tide.y + 1000); // Start bottom left
-    targetCtx.lineTo(0, tide.y); // Top left
-
-    // Draw wavy top
-    const waveRes = 10;
-    for (let x = 0; x <= worldWidth; x += waveRes) {
-        // Sine wave + random glitch
-        let yOffset = Math.sin(x * 0.05 + tide.waveOffset) * 15;
-        // Occasional vertical glitch spikes
-        if (Math.random() > 0.98) yOffset -= Math.random() * 30; // Spike up
-        targetCtx.lineTo(x, tide.y + yOffset);
-    }
-
-    targetCtx.lineTo(worldWidth, tide.y + 1000); // Bottom right
-    targetCtx.closePath();
-
-    // Gradient fill for the void
-    const tideGrad = targetCtx.createLinearGradient(0, tide.y, 0, tide.y + 500);
-    tideGrad.addColorStop(0, 'rgba(255, 0, 85, 0.6)'); // Top transparency
-    tideGrad.addColorStop(0.2, 'rgba(50, 0, 20, 0.9)');
-    tideGrad.addColorStop(1, 'rgba(0, 0, 0, 1)');
-    targetCtx.fillStyle = tideGrad;
-    targetCtx.fill();
-
-    // Top edge glow line
-    targetCtx.shadowBlur = 15;
-    targetCtx.shadowColor = '#ff3366';
-    targetCtx.strokeStyle = '#ff99aa';
-    targetCtx.lineWidth = 3;
-    targetCtx.stroke();
-
-    targetCtx.restore();
-}
-
-function draw() {
-    // 1. Draw Game
-    ctx.fillStyle = '#0a0a12';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    renderWorld(ctx);
-
-    // 2. Draw Background (High Quality Vector Stretch)
-    if (bgCanvas.width > 0 && bgCanvas.height > 0) {
-        // Clear background
-        bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
-
-        bgCtx.save();
-        // Scale to fill the background
-        const scaleX = bgCanvas.width / canvas.width;
-        const scaleY = bgCanvas.height / canvas.height;
-        bgCtx.scale(scaleX, scaleY);
-
-        renderWorld(bgCtx);
-        bgCtx.restore();
+    gameOver() {
+        this.state = 'gameover';
+        this.finalScoreEl.textContent = this.score + 'm';
+        this.gameOverScreen.classList.remove('hidden');
     }
 }
 
-function gameLoop(timestamp) {
-    if (window.innerWidth !== lastWindowWidth || window.innerHeight !== lastWindowHeight) {
-        resize();
+// ==========================================
+// 6. CONTROLLER APP (PHONE SIDE)
+// ==========================================
+
+class ControllerApp {
+    constructor(hostId) {
+        this.setupUI();
+        this.net = new NetworkManager();
+
+        // UI Refs
+        this.arrow = document.getElementById('arrow');
+        this.jumpBtn = document.getElementById('jump-btn');
+        this.startOverlay = document.getElementById('start-overlay');
+        this.tiltVector = { x: 0, y: 0, magnitude: 0, angle: 0 };
+
+        this.init(hostId);
     }
 
-    const dt = timestamp - lastTime;
-    lastTime = timestamp;
-    frameCount++;
-    update(dt);
-    draw();
-    requestAnimationFrame(gameLoop);
-}
+    setupUI() {
+        document.getElementById('controller-view').classList.remove('hidden');
+        document.getElementById('host-view').classList.add('hidden'); // Ensure host hidden
+    }
 
-function startGame() {
-    gameState = 'playing';
-}
+    init(hostId) {
+        this.net.initController(hostId);
 
-// --- CONTROLLER LOGIC ---
-function initController(hostId) {
-    controllerView.classList.remove('hidden');
-    peer = new Peer();
-    peer.on('open', (id) => {
-        conn = peer.connect(hostId);
-        conn.on('open', () => {
-            console.log('Connected to host');
-            startOverlay.style.display = 'flex';
+        this.net.on('connected', () => {
+            this.startOverlay.style.display = 'flex';
         });
-        conn.on('data', (data) => {
-            if (data.type === 'vibrate' && navigator.vibrate) {
-                navigator.vibrate(data.duration);
+
+        this.net.on('data', (d) => {
+            if (d.type === 'vibrate' && navigator.vibrate) {
+                navigator.vibrate(d.duration);
             }
         });
-    });
 
-    enableSensorsBtn.addEventListener('click', () => {
+        document.getElementById('enable-sensors-btn').addEventListener('click', () => this.requestPermissions());
+    }
+
+    requestPermissions() {
         if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
             DeviceOrientationEvent.requestPermission()
-                .then(response => {
-                    if (response === 'granted') startController();
-                    else alert('Permission denied');
+                .then(resp => {
+                    if (resp === 'granted') this.start();
+                    else alert("Sensors required!");
                 })
                 .catch(console.error);
         } else {
-            startController();
+            this.start();
         }
-    });
+    }
+
+    start() {
+        this.startOverlay.style.display = 'none';
+
+        // Listen to Sensors
+        window.addEventListener('deviceorientation', (e) => this.handleOrientation(e));
+
+        // Listen to Jump
+        const sendJump = (e) => {
+            e.preventDefault();
+            this.net.send({ type: 'jump' });
+        };
+        this.jumpBtn.addEventListener('touchstart', sendJump);
+        this.jumpBtn.addEventListener('mousedown', sendJump);
+    }
+
+    handleOrientation(e) {
+        const gamma = e.gamma || 0;
+        const beta = e.beta || 0;
+
+        const x = gamma * Config.Visual.TILT_SENSITIVITY;
+        const y = beta * Config.Visual.TILT_SENSITIVITY;
+
+        const maxMag = 100;
+        const mag = Math.min(Math.sqrt(x * x + y * y), maxMag);
+        const angle = Math.atan2(y, x);
+
+        this.tiltVector = { x, y, magnitude: mag, angle };
+
+        this.updateUI();
+        this.net.send({ type: 'tilt', vector: this.tiltVector });
+    }
+
+    updateUI() {
+        const rotationDeg = (this.tiltVector.angle * 180 / Math.PI) + 270;
+        const scale = this.tiltVector.magnitude / 50;
+        this.arrow.style.transform = `rotate(${rotationDeg}deg) scaleY(${0.5 + scale * 0.5})`;
+    }
 }
 
-function startController() {
-    startOverlay.style.display = 'none';
-    window.addEventListener('deviceorientation', handleOrientation);
-    jumpBtn.addEventListener('touchstart', (e) => { e.preventDefault(); sendJump(); });
-    jumpBtn.addEventListener('mousedown', (e) => { e.preventDefault(); sendJump(); });
-}
-
-function handleOrientation(event) {
-    let gamma = event.gamma || 0;
-    let beta = event.beta || 0;
-
-    const x = gamma * TILT_SENSITIVITY;
-    const y = beta * TILT_SENSITIVITY;
-
-    const magnitude = Math.min(Math.sqrt(x * x + y * y), 100);
-    const angle = Math.atan2(y, x);
-
-    tiltVector = { x, y, magnitude, angle };
-    updateArrowUI();
-    if (conn && conn.open) conn.send({ type: 'tilt', vector: tiltVector });
-}
-
-function updateArrowUI() {
-    const rotationDeg = (tiltVector.angle * 180 / Math.PI) + 270;
-    const scale = tiltVector.magnitude / 50;
-    arrow.style.transform = `rotate(${rotationDeg}deg) scaleY(${0.5 + scale * 0.5})`;
-}
-
-function sendJump() {
-    if (conn && conn.open) conn.send({ type: 'jump' });
-}
-
-// Start
-init();
+// Boot the Game
+new Game().init();
